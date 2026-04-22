@@ -1,0 +1,16 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Logs / temp
+*.log
+node_modules/
+
+# 사용자 데이터 / 민감 정보
+*.xlsx
+*.csv
+backup_*.json
