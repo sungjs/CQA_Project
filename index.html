@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CQA Input Tool</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+<div class="max-w-[1600px] mx-auto p-4">
+  <header class="flex items-center justify-between mb-4">
+    <div>
+      <h1 class="text-2xl font-bold text-slate-900">🧪 CQA Input Tool</h1>
+      <p class="text-sm text-slate-500">ROI/환자 수를 자유롭게 조정하면서 CQA 결과를 입력하고 한 번에 xlsx로 내보냅니다.</p>
+    </div>
+    <div class="flex gap-2">
+      <button id="btnLoad" class="px-3 py-2 text-sm bg-white border rounded hover:bg-slate-100">📂 JSON 불러오기</button>
+      <button id="btnSave" class="px-3 py-2 text-sm bg-white border rounded hover:bg-slate-100">💾 JSON 저장</button>
+      <button id="btnClear" class="px-3 py-2 text-sm bg-white border rounded hover:bg-slate-100">🗑 초기화</button>
+      <button id="btnDownload" class="px-3 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 font-semibold">⬇ XLSX 다운로드</button>
+      <input type="file" id="fileInput" accept=".json" class="hidden" />
+    </div>
+  </header>
+
+  <div class="card mb-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <label class="text-sm">
+        <span class="block font-medium mb-1">프로젝트 이름 (파일명)</span>
+        <input id="projectName" class="plain w-full" />
+      </label>
+      <label class="text-sm">
+        <span class="block font-medium mb-1">총평 / Notion 링크 (선택)</span>
+        <input id="notionLink" class="plain w-full" placeholder="노션을 참고해주세요 등" />
+      </label>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="font-semibold text-sm">🎚 Cutoff 기준 정의</h3>
+      <span class="text-xs text-slate-500">각 타입별 임계값을 자유롭게 조정할 수 있습니다.</span>
+    </div>
+    <table class="text-sm w-full">
+      <thead>
+        <tr class="text-slate-500 text-xs">
+          <th class="text-left w-16">Type</th>
+          <th class="text-center">평균 ≥</th>
+          <th class="text-center">점수 이하 기준 (N점)</th>
+          <th class="text-center">비율 ≤</th>
+          <th class="text-left pl-4">해석</th>
+        </tr>
+      </thead>
+      <tbody id="cutoffBody"></tbody>
+    </table>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+    <div class="card">
+      <h3 class="font-semibold text-sm mb-2">🎯 ROI 목록 (<span id="roiCount">0</span>) <span class="text-xs font-normal text-slate-400">— Cutoff 타입 선택</span></h3>
+      <div id="roiList" class="flex flex-wrap gap-1 mb-2 min-h-[36px]"></div>
+      <form id="roiAddForm" class="flex gap-1">
+        <input id="roiAddInput" class="plain flex-1 text-sm" placeholder="ROI 이름 입력 후 Enter" />
+        <button class="px-3 py-1 text-sm bg-slate-800 text-white rounded">추가</button>
+      </form>
+    </div>
+    <div class="card">
+      <h3 class="font-semibold text-sm mb-2">🧑‍⚕️ Validation 환자 (<span id="valCount">0</span>)</h3>
+      <div id="valList" class="flex flex-wrap gap-1 mb-2 min-h-[36px]"></div>
+      <form id="valAddForm" class="flex gap-1">
+        <input id="valAddInput" class="plain flex-1 text-sm" placeholder="환자 ID 입력 후 Enter" />
+        <button class="px-3 py-1 text-sm bg-slate-800 text-white rounded">추가</button>
+      </form>
+      <div class="mt-2 flex gap-2">
+        <button id="valBulkBtn" class="text-xs text-indigo-600 hover:underline">일괄 입력 (콤마/줄바꿈)</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3 class="font-semibold text-sm mb-2">🧪 Test 환자 (7-8 Variant) (<span id="testCount">0</span>)</h3>
+      <div id="testList" class="flex flex-wrap gap-1 mb-2 min-h-[36px]"></div>
+      <form id="testAddForm" class="flex gap-1">
+        <input id="testAddInput" class="plain flex-1 text-sm" placeholder="Test ID 입력 후 Enter" />
+        <button class="px-3 py-1 text-sm bg-slate-800 text-white rounded">추가</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="flex gap-1 border-b border-slate-200 mb-3 text-sm">
+    <button class="tab-btn active" data-tab="completeness">1. ROI Completeness</button>
+    <button class="tab-btn" data-tab="usability">2. Clinical Usability</button>
+    <button class="tab-btn" data-tab="variant">7-8. Variant cases</button>
+    <button class="tab-btn" data-tab="specs">3-6. Specifications</button>
+    <button class="tab-btn" data-tab="summary">A. Summary (미리보기)</button>
+  </div>
+
+  <div id="tab-completeness" class="tab-content">
+    <div class="card">
+      <p class="text-sm text-slate-600 mb-2">각 환자에서 ROI가 <b>누락됐으면 체크</b>하세요. (체크 = 누락, 빈칸 = 존재). xlsx에는 존재 셀이 <code>-</code>로, 누락 셀이 빈칸으로 저장됩니다.</p>
+      <div id="completenessGrid" class="grid-wrap"></div>
+    </div>
+  </div>
+  <div id="tab-usability" class="tab-content hidden">
+    <div class="card">
+      <p class="text-sm text-slate-600 mb-2">1~5 점수를 <b>키보드로 바로 입력</b>하세요. Completeness에서 누락 체크된 셀은 자동 ❌ 고정됩니다. Tab/Enter로 다음 셀, Shift+Tab으로 이전 셀 이동.</p>
+      <div id="usabilityGrid" class="grid-wrap"></div>
+    </div>
+  </div>
+  <div id="tab-variant" class="tab-content hidden">
+    <div class="card">
+      <p class="text-sm text-slate-600 mb-2">Variant Test 환자 점수 입력. <code>1-5</code> 또는 누락의 경우 <code>x</code>를 입력하면 ❌로 변환됩니다.</p>
+      <div id="variantGrid" class="grid-wrap"></div>
+    </div>
+  </div>
+  <div id="tab-specs" class="tab-content hidden">
+    <div class="card">
+      <p class="text-sm text-slate-600 mb-2">각 ROI에서 개선이 필요한 항목을 체크하세요. 점수는 Clinical Usability 평균에서 자동 반올림됩니다.</p>
+      <div id="specsGrid" class="grid-wrap"></div>
+    </div>
+  </div>
+  <div id="tab-summary" class="tab-content hidden">
+    <div class="card">
+      <p class="text-sm text-slate-600 mb-2">현재 입력값 기반 실시간 미리보기입니다. 실제 xlsx에는 동일 결과가 수식으로 들어갑니다.</p>
+      <div id="summaryView"></div>
+    </div>
+  </div>
+
+  <footer class="text-center text-xs text-slate-400 mt-8 py-4">
+    CQA Input Tool · 데이터는 브라우저 localStorage에 자동 저장됩니다.
+  </footer>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
