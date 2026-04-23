@@ -645,6 +645,137 @@ function importJSON(file) {
   reader.readAsText(file);
 }
 
+//==================== MARKDOWN COPY ====================
+function toMdTable(headers, rows) {
+  const escape = s => String(s ?? '').replace(/\|/g, '\\|');
+  return [
+    '| ' + headers.map(escape).join(' | ') + ' |',
+    '| ' + headers.map(() => '---').join(' | ') + ' |',
+    ...rows.map(r => '| ' + r.map(escape).join(' | ') + ' |')
+  ].join('\n');
+}
+
+function generateMdCompleteness() {
+  const V = state.validations.length, R = state.rois.length;
+  if (!V || !R) return '';
+  const headers = ['PatientID', ...state.rois, 'Comment'];
+  const rows = state.validations.map((v, vi) => [
+    v,
+    ...state.rois.map((_, ri) => getCell(state.completeness, vi, ri) ? '' : '-'),
+    state.completenessComment[vi] || ''
+  ]);
+  const missCounts = state.rois.map((_, ri) => {
+    let miss = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri)) miss++;
+    return miss;
+  });
+  rows.push(['**Count (missing)**', ...missCounts.map(String), '']);
+  rows.push(['**Completeness**', ...missCounts.map(m => ((V - m) / V * 100).toFixed(0) + '%'), '']);
+  return toMdTable(headers, rows);
+}
+
+function generateMdUsability() {
+  const V = state.validations.length, R = state.rois.length;
+  if (!V || !R) return '';
+  const headers = ['PatientID', ...state.rois, 'Comment'];
+  const rows = state.validations.map((v, vi) => [
+    v,
+    ...state.rois.map((_, ri) => getCell(state.completeness, vi, ri) ? '❌' : (getCell(state.usability, vi, ri) || '')),
+    state.usabilityComment[vi] || ''
+  ]);
+  const stats = computeUsabilityStats();
+  rows.push(['**Average**', ...stats.map(s => s.avg !== null ? s.avg.toFixed(2) : '-'), '']);
+  rows.push(['**Ratio (≤2)**', ...stats.map(s => s.r2 !== null ? (s.r2 * 100).toFixed(0) + '%' : '-'), '']);
+  rows.push(['**Ratio (≤3)**', ...stats.map(s => s.r3 !== null ? (s.r3 * 100).toFixed(0) + '%' : '-'), '']);
+  rows.push(['**Cutoff type**', ...state.roiCutoffs, '']);
+  rows.push(['**PASS / FAIL**', ...stats.map(s => s.pass || '-'), '']);
+  return toMdTable(headers, rows);
+}
+
+function generateMdVariant() {
+  const T = state.tests.length, R = state.rois.length;
+  if (!T || !R) return '';
+  const headers = ['PatientID', ...state.rois, 'Comment'];
+  const rows = state.tests.map((t, ti) => [
+    t,
+    ...state.rois.map((_, ri) => getCell(state.variant, ti, ri) || ''),
+    state.variantComment[ti] || ''
+  ]);
+  const avgs = state.rois.map((_, ri) => {
+    const scores = []; for (let ti = 0; ti < T; ti++) { const s = getCell(state.variant, ti, ri); if (s && !isNaN(+s)) scores.push(+s); }
+    return scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2) : '-';
+  });
+  rows.push(['**Average**', ...avgs, '']);
+  return toMdTable(headers, rows);
+}
+
+function generateMdSpecs() {
+  const R = state.rois.length;
+  if (!R) return '';
+  const us = computeUsabilityStats(), cp = computeCompletenessStats();
+  const headers = ['ROI', 'Cutoff', 'Comp.', 'PASS/FAIL', 'Avg', ...CRITERIA, 'Comment', 'Improvement required'];
+  const rows = state.rois.map((roi, ri) => {
+    const u = us[ri];
+    const imp = CRITERIA.filter((_, ci) => getCell(state.specs, ri, ci));
+    return [
+      roi,
+      state.roiCutoffs[ri],
+      (cp[ri].completeness * 100).toFixed(0) + '%',
+      u.pass || '-',
+      u.avg !== null ? u.avg.toFixed(2) : '-',
+      ...CRITERIA.map((_, ci) => getCell(state.specs, ri, ci) ? String(Math.round(u.avg)) : ''),
+      state.specsComment[ri] || '',
+      imp.join(', ')
+    ];
+  });
+  return toMdTable(headers, rows);
+}
+
+function generateMdSummary() {
+  const us = computeUsabilityStats(), cp = computeCompletenessStats();
+  const headers = ['ROI', 'Cutoff', 'PASS/FAIL', 'Avg', 'Ratio(≤2)', 'Ratio(≤3)', 'Completeness', 'Improvement'];
+  const rows = state.rois.map((roi, ri) => {
+    const u = us[ri];
+    const imp = CRITERIA.filter((_, ci) => getCell(state.specs, ri, ci));
+    return [
+      roi, state.roiCutoffs[ri], u.pass || '-',
+      u.avg !== null ? u.avg.toFixed(2) : '-',
+      u.r2 !== null ? (u.r2 * 100).toFixed(0) + '%' : '-',
+      u.r3 !== null ? (u.r3 * 100).toFixed(0) + '%' : '-',
+      (cp[ri].completeness * 100).toFixed(0) + '%',
+      imp.join(', ')
+    ];
+  });
+  const passed = state.rois.filter((_, ri) => us[ri].pass === 'PASS').join(', ') || '-';
+  const failed = state.rois.filter((_, ri) => us[ri].pass === 'FAIL').join(', ') || '-';
+  let md = toMdTable(headers, rows);
+  md += `\n\n**Passed list:** ${passed}\n**Failed list:** ${failed}`;
+  if (state.notionLink) md += `\n**총평:** ${state.notionLink}`;
+  return md;
+}
+
+async function copyTabMd(tab) {
+  const generators = {
+    completeness: generateMdCompleteness,
+    usability: generateMdUsability,
+    variant: generateMdVariant,
+    specs: generateMdSpecs,
+    summary: generateMdSummary
+  };
+  const md = generators[tab]?.();
+  if (!md) return;
+  const btn = document.querySelector(`#tab-${tab} .copy-md-btn`);
+  try {
+    await navigator.clipboard.writeText(md);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = md; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+  }
+  if (btn) {
+    btn.textContent = '✅ 복사됨'; btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = '📋 MD 복사'; btn.classList.remove('copied'); }, 1500);
+  }
+}
+
 function init() {
   renderLists(); setupAddForms(); setupTabs(); renderAll();
   el('btnDownload').onclick = downloadXLSX; el('btnSave').onclick = exportJSON;
