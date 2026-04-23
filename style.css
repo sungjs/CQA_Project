@@ -38,3 +38,7 @@ input.plain { border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 8px; }
 .copy-md-btn { padding: 4px 12px; font-size: 12px; background: white; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer; white-space: nowrap; color: #475569; flex-shrink: 0; }
 .copy-md-btn:hover { background: #f1f5f9; border-color: #94a3b8; }
 .copy-md-btn.copied { color: #059669; border-color: #6ee7b7; background: #f0fdf4; }
+.score-low { background: #fee2e2 !important; }
+.score-mid { background: #fef9c3 !important; }
+.prog-bar { width: 48px; height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden; display: inline-block; flex-shrink: 0; vertical-align: middle; }
+.prog-fill { height: 100%; border-radius: 4px; }

@@ -183,6 +183,12 @@ function setupAddForms() {
     const arr = input.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
     state.validations.push(...arr); saveState(); renderAll();
   };
+  el('testBulkBtn').onclick = () => {
+    const input = prompt('Test ID를 콤마나 줄바꿈으로 구분해 입력하세요.');
+    if (!input) return;
+    const arr = input.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+    state.tests.push(...arr); saveState(); renderAll();
+  };
   el('projectName').oninput = (e) => { state.projectName = e.target.value; saveState(); };
   el('notionLink').oninput = (e) => { state.notionLink = e.target.value; saveState(); };
 }
@@ -262,7 +268,11 @@ function renderUsabilityGrid() {
     html += `<div class="c rh">${esc(v)}</div>`;
     state.rois.forEach((roi, ri) => {
       if (getCell(state.completeness, vi, ri)) html += `<div class="c missing">❌</div>`;
-      else html += `<div class="c"><input type="text" inputmode="numeric" maxlength="1" data-vi="${vi}" data-ri="${ri}" class="us-inp" value="${esc(getCell(state.usability, vi, ri) || '')}" placeholder="·" /></div>`;
+      else {
+        const sv = getCell(state.usability, vi, ri) || '';
+        const sc = sv ? (+sv <= 2 ? ' score-low' : +sv === 3 ? ' score-mid' : '') : '';
+        html += `<div class="c${sc}"><input type="text" inputmode="numeric" maxlength="1" data-vi="${vi}" data-ri="${ri}" class="us-inp" value="${esc(sv)}" placeholder="·" /></div>`;
+      }
     });
     html += `<div class="c cm"><input type="text" data-vi="${vi}" class="us-comment" value="${esc(state.usabilityComment[vi] || '')}" /></div>`;
   });
@@ -287,7 +297,14 @@ function renderUsabilityGrid() {
     inp.oninput = (e) => {
       const { value, valid } = validateScoreInput(e.target.value);
       e.target.classList.toggle('invalid-score', !valid && e.target.value.trim() !== '');
-      if (valid) { setCell(state.usability, +e.target.dataset.vi, +e.target.dataset.ri, value); saveState(); updateUsabilityStatsRow(); renderSpecsGrid(); renderSummaryView(); }
+      if (valid) {
+        setCell(state.usability, +e.target.dataset.vi, +e.target.dataset.ri, value); saveState();
+        const div = e.target.parentElement;
+        div.classList.remove('score-low', 'score-mid');
+        if (value && +value <= 2) div.classList.add('score-low');
+        else if (value && +value === 3) div.classList.add('score-mid');
+        updateUsabilityStatsRow(); renderSpecsGrid(); renderSummaryView();
+      }
     };
     inp.onkeydown = handleGridKeyNav;
   });
@@ -350,7 +367,8 @@ function renderVariantGrid() {
     html += `<div class="c rh">${esc(t)}</div>`;
     state.rois.forEach((roi, ri) => {
       const s = getCell(state.variant, ti, ri) || '';
-      html += `<div class="c"><input type="text" maxlength="1" data-ti="${ti}" data-ri="${ri}" class="var-inp" value="${esc(s==='❌'?'❌':s)}" placeholder="·" /></div>`;
+      const sc = s && s !== '❌' ? (+s <= 2 ? ' score-low' : +s === 3 ? ' score-mid' : '') : '';
+      html += `<div class="c${sc}"><input type="text" maxlength="1" data-ti="${ti}" data-ri="${ri}" class="var-inp" value="${esc(s==='❌'?'❌':s)}" placeholder="·" /></div>`;
     });
     html += `<div class="c cm"><input type="text" data-ti="${ti}" class="var-comment" value="${esc(state.variantComment[ti] || '')}" /></div>`;
   });
@@ -365,7 +383,14 @@ function renderVariantGrid() {
       const raw = e.target.value.trim(); let val = '', valid = true;
       if (raw === '') val = ''; else if (['1','2','3','4','5'].includes(raw)) val = raw; else if (raw.toLowerCase() === 'x' || raw === '❌') val = '❌'; else { valid = false; val = raw; }
       e.target.classList.toggle('invalid-score', !valid);
-      if (valid) { if (val === '❌') e.target.value = '❌'; setCell(state.variant, +e.target.dataset.ti, +e.target.dataset.ri, val); saveState(); }
+      if (valid) {
+        if (val === '❌') e.target.value = '❌';
+        setCell(state.variant, +e.target.dataset.ti, +e.target.dataset.ri, val); saveState();
+        const div = e.target.parentElement;
+        div.classList.remove('score-low', 'score-mid');
+        if (val && val !== '❌' && +val <= 2) div.classList.add('score-low');
+        else if (val && val !== '❌' && +val === 3) div.classList.add('score-mid');
+      }
     };
     inp.onkeydown = handleGridKeyNav;
   });
@@ -400,7 +425,12 @@ function renderSummaryView() {
   let html = '<table class="summary-table"><thead><tr><th>ROI</th><th>Cutoff</th><th>PASS/FAIL</th><th>Avg</th><th>Ratio(≤2)</th><th>Ratio(≤3)</th><th>Completeness</th><th>Improvement</th></tr></thead><tbody>';
   state.rois.forEach((roi, ri) => {
     const u = us[ri], imp = CRITERIA.filter((_, ci) => getCell(state.specs, ri, ci));
-    html += `<tr><td>${esc(roi)}</td><td><b>${state.roiCutoffs[ri]}</b></td><td class="${u.pass==='PASS'?'pass':u.pass==='FAIL'?'fail':''}">${u.pass||'-'}</td><td>${u.avg!==null?u.avg.toFixed(2):'-'}</td><td>${u.r2!==null?(u.r2*100).toFixed(0)+'%':'-'}</td><td>${u.r3!==null?(u.r3*100).toFixed(0)+'%':'-'}</td><td>${(cp[ri].completeness*100).toFixed(0)}%</td><td class="text-xs">${esc(imp.join(', '))}</td></tr>`;
+    const barColor = u.pass === 'PASS' ? '#059669' : u.avg !== null && u.avg >= 3 ? '#d97706' : '#dc2626';
+    const barWidth = u.avg !== null ? (u.avg / 5 * 100).toFixed(0) : 0;
+    const avgCell = u.avg !== null
+      ? `<div style="display:flex;align-items:center;gap:6px;justify-content:center;">${u.avg.toFixed(2)}<div class="prog-bar"><div class="prog-fill" style="width:${barWidth}%;background:${barColor}"></div></div></div>`
+      : '-';
+    html += `<tr><td>${esc(roi)}</td><td><b>${state.roiCutoffs[ri]}</b></td><td class="${u.pass==='PASS'?'pass':u.pass==='FAIL'?'fail':''}">${u.pass||'-'}</td><td>${avgCell}</td><td>${u.r2!==null?(u.r2*100).toFixed(0)+'%':'-'}</td><td>${u.r3!==null?(u.r3*100).toFixed(0)+'%':'-'}</td><td>${(cp[ri].completeness*100).toFixed(0)}%</td><td class="text-xs">${esc(imp.join(', '))}</td></tr>`;
   });
   html += '</tbody></table>';
   html += `<div class="mt-4 text-sm"><p><b>Passed list:</b> <span class="text-green-700">${esc(state.rois.filter((_,ri)=>us[ri].pass==='PASS').join(', ') || '-')}</span></p><p><b>Failed list:</b> <span class="text-red-700">${esc(state.rois.filter((_,ri)=>us[ri].pass==='FAIL').join(', ') || '-')}</span></p></div>`;
@@ -620,6 +650,18 @@ function buildWorkbook() {
 }
 
 function downloadXLSX() {
+  const V = state.validations.length, R = state.rois.length;
+  const incomplete = [];
+  for (let vi = 0; vi < V; vi++) {
+    for (let ri = 0; ri < R; ri++) {
+      if (!getCell(state.completeness, vi, ri) && !getCell(state.usability, vi, ri))
+        incomplete.push(`${state.validations[vi]} / ${state.rois[ri]}`);
+    }
+  }
+  if (incomplete.length > 0) {
+    const preview = incomplete.slice(0, 5).join('\n') + (incomplete.length > 5 ? `\n...외 ${incomplete.length - 5}개` : '');
+    if (!confirm(`Usability 점수가 비어있는 셀 ${incomplete.length}개:\n\n${preview}\n\n그래도 다운로드할까요?`)) return;
+  }
   const wb = buildWorkbook();
   const fname = (state.projectName || 'CQA_Result').replace(/[^\w.\-\uAC00-\uD7A3]+/g, '_') + '.xlsx';
   XLSX.writeFile(wb, fname);
@@ -753,6 +795,17 @@ function generateMdSummary() {
   return md;
 }
 
+function generateMdAll() {
+  const sections = [
+    ['## 1. ROI Completeness', generateMdCompleteness()],
+    ['## 2. Clinical Usability', generateMdUsability()],
+    ['## 7-8. Variant cases', generateMdVariant()],
+    ['## 3-6. Specifications', generateMdSpecs()],
+    ['## A. Summary', generateMdSummary()],
+  ];
+  return sections.filter(([, md]) => md).map(([title, md]) => `${title}\n\n${md}`).join('\n\n---\n\n');
+}
+
 async function copyTabMd(tab) {
   const generators = {
     completeness: generateMdCompleteness,
@@ -785,6 +838,24 @@ function init() {
     if (!confirm('모든 입력을 초기화할까요? (localStorage 포함)')) return;
     localStorage.removeItem(LS_KEY); state = defaultState(); saveState(); renderAll();
   };
+  el('btnCopyAll').onclick = async () => {
+    const md = generateMdAll();
+    if (!md) return;
+    const btn = el('btnCopyAll');
+    try { await navigator.clipboard.writeText(md); } catch {
+      const ta = document.createElement('textarea'); ta.value = md;
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+    }
+    btn.textContent = '✅ 복사됨';
+    setTimeout(() => { btn.textContent = '📋 전체 MD 복사'; }, 1500);
+  };
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+      e.preventDefault();
+      const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
+      if (activeTab) copyTabMd(activeTab);
+    }
+  });
 }
 
 window.addEventListener('DOMContentLoaded', init);
