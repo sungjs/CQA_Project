@@ -195,8 +195,9 @@ function setupAddForms() {
 
 function toggleSection(btn) {
   const body = btn.closest('.section-wrap').querySelector('.section-bd');
-  const collapsed = body.classList.toggle('collapsed');
-  btn.textContent = collapsed ? '▼ 펼치기' : '▲ 접기';
+  const isNowCollapsed = body.style.display !== 'none';
+  body.style.display = isNowCollapsed ? 'none' : '';
+  btn.textContent = isNowCollapsed ? '▼ 펼치기' : '▲ 접기';
 }
 
 const ROWHEAD_W = 160; const CELL_W = 90; const COMMENT_W = 220;
@@ -908,28 +909,13 @@ function exportPDF() {
 
   if (!sections.length) { alert('선택한 섹션에 출력할 데이터가 없습니다.'); return; }
 
-  const win = window.open('', '_blank');
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
-  <title>${e(state.projectName)} - CQA Report</title>
-  <style>
-    body{font-family:"Malgun Gothic","맑은 고딕",sans-serif;font-size:10px;margin:20px;color:#1e293b;}
-    h1{font-size:15px;margin-bottom:2px;} .meta{font-size:10px;color:#64748b;margin-bottom:16px;}
-    h2{font-size:12px;margin:20px 0 6px;color:#3730a3;border-bottom:1px solid #e2e8f0;padding-bottom:3px;}
-    table{border-collapse:collapse;width:100%;margin-bottom:8px;font-size:9px;}
-    th,td{border:1px solid #cbd5e1;padding:3px 5px;text-align:center;}
-    th{background:#f1f5f9;font-weight:600;}
-    tr:nth-child(even) td{background:#f8fafc;}
-    .pass{color:#059669;font-weight:600;} .fail{color:#dc2626;font-weight:600;}
-    section{page-break-inside:avoid;margin-bottom:12px;}
-    p{margin:4px 0;font-size:10px;}
-    @media print{body{margin:10px;}}
-  </style></head><body>
-  <h1>${e(state.projectName)} — CQA Report</h1>
-  <div class="meta">${new Date().toLocaleDateString('ko-KR', {year:'numeric',month:'long',day:'numeric'})}</div>
-  ${sections.join('\n')}
-  <script>window.onload=()=>{window.print();}<\/script>
-  </body></html>`);
-  win.document.close();
+  const area = document.getElementById('pdf-print-area');
+  area.innerHTML = `
+    <h1>${e(state.projectName)} — CQA Report</h1>
+    <div class="pdf-meta">${new Date().toLocaleDateString('ko-KR', {year:'numeric',month:'long',day:'numeric'})}</div>
+    ${sections.join('\n')}
+  `;
+  window.print();
 }
 
 function init() {
