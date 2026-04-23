@@ -21,6 +21,7 @@
       <button id="btnSave" class="px-3 py-2 text-sm bg-white border rounded hover:bg-slate-100">💾 JSON 저장</button>
       <button id="btnClear" class="px-3 py-2 text-sm bg-white border rounded hover:bg-slate-100">🗑 초기화</button>
       <button id="btnCopyAll" class="px-3 py-2 text-sm bg-white border rounded hover:bg-slate-100">📋 전체 MD 복사</button>
+      <button id="btnExportPdf" class="px-3 py-2 text-sm bg-white border rounded hover:bg-slate-100">🖨 PDF 내보내기</button>
       <button id="btnDownload" class="px-3 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 font-semibold">⬇ XLSX 다운로드</button>
       <input type="file" id="fileInput" accept=".json" class="hidden" />
     </div>
@@ -91,56 +92,72 @@
     </div>
   </div>
 
-  <div class="flex gap-1 border-b border-slate-200 mb-3 text-sm">
-    <button class="tab-btn active" data-tab="completeness">1. ROI Completeness</button>
-    <button class="tab-btn" data-tab="usability">2. Clinical Usability</button>
-    <button class="tab-btn" data-tab="variant">7-8. Variant cases</button>
-    <button class="tab-btn" data-tab="specs">3-6. Specifications</button>
-    <button class="tab-btn" data-tab="summary">A. Summary (미리보기)</button>
-  </div>
-
-  <div id="tab-completeness" class="tab-content">
-    <div class="card">
-      <div class="flex items-start justify-between gap-2 mb-2">
-        <p class="text-sm text-slate-600">각 환자에서 ROI가 <b>누락됐으면 체크</b>하세요. (체크 = 누락, 빈칸 = 존재). xlsx에는 존재 셀이 <code>-</code>로, 누락 셀이 빈칸으로 저장됩니다.</p>
+  <div class="section-wrap mb-3" id="section-completeness" data-section="completeness">
+    <div class="section-hd">
+      <label><input type="checkbox" class="pdf-chk" checked /><span>1. ROI Completeness</span></label>
+      <div class="flex gap-2 items-center">
         <button class="copy-md-btn" onclick="copyTabMd('completeness')">📋 MD 복사</button>
+        <button class="section-toggle-btn" onclick="toggleSection(this)">▲ 접기</button>
       </div>
+    </div>
+    <div class="section-bd">
+      <p class="text-sm text-slate-600 mb-2">각 환자에서 ROI가 <b>누락됐으면 체크</b>하세요. (체크 = 누락, 빈칸 = 존재). xlsx에는 존재 셀이 <code>-</code>로, 누락 셀이 빈칸으로 저장됩니다.</p>
       <div id="completenessGrid" class="grid-wrap"></div>
     </div>
   </div>
-  <div id="tab-usability" class="tab-content hidden">
-    <div class="card">
-      <div class="flex items-start justify-between gap-2 mb-2">
-        <p class="text-sm text-slate-600">1~5 점수를 <b>키보드로 바로 입력</b>하세요. Completeness에서 누락 체크된 셀은 자동 ❌ 고정됩니다. Tab/Enter로 다음 셀, Shift+Tab으로 이전 셀 이동.</p>
+
+  <div class="section-wrap mb-3" id="section-usability" data-section="usability">
+    <div class="section-hd">
+      <label><input type="checkbox" class="pdf-chk" checked /><span>2. Clinical Usability</span></label>
+      <div class="flex gap-2 items-center">
         <button class="copy-md-btn" onclick="copyTabMd('usability')">📋 MD 복사</button>
+        <button class="section-toggle-btn" onclick="toggleSection(this)">▲ 접기</button>
       </div>
+    </div>
+    <div class="section-bd">
+      <p class="text-sm text-slate-600 mb-2">1~5 점수를 <b>키보드로 바로 입력</b>하세요. Completeness에서 누락 체크된 셀은 자동 ❌ 고정됩니다. Tab/Enter로 다음 셀, Shift+Tab으로 이전 셀 이동.</p>
       <div id="usabilityGrid" class="grid-wrap"></div>
     </div>
   </div>
-  <div id="tab-variant" class="tab-content hidden">
-    <div class="card">
-      <div class="flex items-start justify-between gap-2 mb-2">
-        <p class="text-sm text-slate-600">Variant Test 환자 점수 입력. <code>1-5</code> 또는 누락의 경우 <code>x</code>를 입력하면 ❌로 변환됩니다.</p>
+
+  <div class="section-wrap mb-3" id="section-variant" data-section="variant">
+    <div class="section-hd">
+      <label><input type="checkbox" class="pdf-chk" checked /><span>7-8. Variant cases</span></label>
+      <div class="flex gap-2 items-center">
         <button class="copy-md-btn" onclick="copyTabMd('variant')">📋 MD 복사</button>
+        <button class="section-toggle-btn" onclick="toggleSection(this)">▲ 접기</button>
       </div>
+    </div>
+    <div class="section-bd">
+      <p class="text-sm text-slate-600 mb-2">Variant Test 환자 점수 입력. <code>1-5</code> 또는 누락의 경우 <code>x</code>를 입력하면 ❌로 변환됩니다.</p>
       <div id="variantGrid" class="grid-wrap"></div>
     </div>
   </div>
-  <div id="tab-specs" class="tab-content hidden">
-    <div class="card">
-      <div class="flex items-start justify-between gap-2 mb-2">
-        <p class="text-sm text-slate-600">각 ROI에서 개선이 필요한 항목을 체크하세요. 점수는 Clinical Usability 평균에서 자동 반올림됩니다.</p>
+
+  <div class="section-wrap mb-3" id="section-specs" data-section="specs">
+    <div class="section-hd">
+      <label><input type="checkbox" class="pdf-chk" checked /><span>3-6. Specifications</span></label>
+      <div class="flex gap-2 items-center">
         <button class="copy-md-btn" onclick="copyTabMd('specs')">📋 MD 복사</button>
+        <button class="section-toggle-btn" onclick="toggleSection(this)">▲ 접기</button>
       </div>
+    </div>
+    <div class="section-bd">
+      <p class="text-sm text-slate-600 mb-2">각 ROI에서 개선이 필요한 항목을 체크하세요. 점수는 Clinical Usability 평균에서 자동 반올림됩니다.</p>
       <div id="specsGrid" class="grid-wrap"></div>
     </div>
   </div>
-  <div id="tab-summary" class="tab-content hidden">
-    <div class="card">
-      <div class="flex items-start justify-between gap-2 mb-2">
-        <p class="text-sm text-slate-600">현재 입력값 기반 실시간 미리보기입니다. 실제 xlsx에는 동일 결과가 수식으로 들어갑니다.</p>
+
+  <div class="section-wrap mb-3" id="section-summary" data-section="summary">
+    <div class="section-hd">
+      <label><input type="checkbox" class="pdf-chk" checked /><span>A. Summary (미리보기)</span></label>
+      <div class="flex gap-2 items-center">
         <button class="copy-md-btn" onclick="copyTabMd('summary')">📋 MD 복사</button>
+        <button class="section-toggle-btn" onclick="toggleSection(this)">▲ 접기</button>
       </div>
+    </div>
+    <div class="section-bd">
+      <p class="text-sm text-slate-600 mb-2">현재 입력값 기반 실시간 미리보기입니다. 실제 xlsx에는 동일 결과가 수식으로 들어갑니다.</p>
       <div id="summaryView"></div>
     </div>
   </div>
