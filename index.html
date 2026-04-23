@@ -16,13 +16,13 @@
       <h1 class="text-2xl font-bold text-slate-900">🧪 CQA Input Tool</h1>
       <p class="text-sm text-slate-500">ROI/환자 수를 자유롭게 조정하면서 CQA 결과를 입력하고 한 번에 xlsx로 내보냅니다.</p>
     </div>
-    <div class="flex gap-2">
-      <button id="btnLoad" class="px-3 py-2 text-sm bg-white border rounded hover:bg-slate-100">📂 JSON 불러오기</button>
-      <button id="btnSave" class="px-3 py-2 text-sm bg-white border rounded hover:bg-slate-100">💾 JSON 저장</button>
-      <button id="btnClear" class="px-3 py-2 text-sm bg-white border rounded hover:bg-slate-100">🗑 초기화</button>
-      <button id="btnCopyAll" class="px-3 py-2 text-sm bg-white border rounded hover:bg-slate-100">📋 전체 MD 복사</button>
-      <button id="btnExportPdf" class="px-3 py-2 text-sm bg-white border rounded hover:bg-slate-100">🖨 PDF 내보내기</button>
-      <button id="btnDownload" class="px-3 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 font-semibold">⬇ XLSX 다운로드</button>
+    <div class="flex gap-2 flex-wrap">
+      <button id="btnLoad" class="btn">📂 JSON 불러오기</button>
+      <button id="btnSave" class="btn">💾 JSON 저장</button>
+      <button id="btnClear" class="btn">🗑 초기화</button>
+      <button id="btnCopyAll" class="btn">📋 전체 MD 복사</button>
+      <button id="btnExportPdf" class="btn">🖨 PDF 내보내기</button>
+      <button id="btnDownload" class="btn btn-primary">⬇ XLSX 다운로드</button>
       <input type="file" id="fileInput" accept=".json" class="hidden" />
     </div>
   </header>
@@ -65,7 +65,7 @@
       <div id="roiList" class="flex flex-wrap gap-1 mb-2 min-h-[36px]"></div>
       <form id="roiAddForm" class="flex gap-1">
         <input id="roiAddInput" class="plain flex-1 text-sm" placeholder="ROI 이름 입력 후 Enter" />
-        <button class="px-3 py-1 text-sm bg-slate-800 text-white rounded">추가</button>
+        <button class="btn btn-dark btn-sm">추가</button>
       </form>
     </div>
     <div class="card">
@@ -73,10 +73,10 @@
       <div id="valList" class="flex flex-wrap gap-1 mb-2 min-h-[36px]"></div>
       <form id="valAddForm" class="flex gap-1">
         <input id="valAddInput" class="plain flex-1 text-sm" placeholder="환자 ID 입력 후 Enter" />
-        <button class="px-3 py-1 text-sm bg-slate-800 text-white rounded">추가</button>
+        <button class="btn btn-dark btn-sm">추가</button>
       </form>
-      <div class="mt-2 flex gap-2">
-        <button id="valBulkBtn" class="text-xs text-indigo-600 hover:underline">일괄 입력 (콤마/줄바꿈)</button>
+      <div class="mt-2">
+        <button id="valBulkBtn" class="btn-link">일괄 입력 (콤마/줄바꿈)</button>
       </div>
     </div>
     <div class="card">
@@ -84,17 +84,17 @@
       <div id="testList" class="flex flex-wrap gap-1 mb-2 min-h-[36px]"></div>
       <form id="testAddForm" class="flex gap-1">
         <input id="testAddInput" class="plain flex-1 text-sm" placeholder="Test ID 입력 후 Enter" />
-        <button class="px-3 py-1 text-sm bg-slate-800 text-white rounded">추가</button>
+        <button class="btn btn-dark btn-sm">추가</button>
       </form>
-      <div class="mt-2 flex gap-2">
-        <button id="testBulkBtn" class="text-xs text-indigo-600 hover:underline">일괄 입력 (콤마/줄바꿈)</button>
+      <div class="mt-2">
+        <button id="testBulkBtn" class="btn-link">일괄 입력 (콤마/줄바꿈)</button>
       </div>
     </div>
   </div>
 
   <div class="section-wrap mb-3" id="section-completeness" data-section="completeness">
     <div class="section-hd">
-      <label><input type="checkbox" class="pdf-chk" checked /><span>1. ROI Completeness</span></label>
+      <label><input type="checkbox" class="pdf-chk" checked /><span>📊 1. ROI Completeness</span></label>
       <div class="flex gap-2 items-center">
         <button class="copy-md-btn" onclick="copyTabMd('completeness')">📋 MD 복사</button>
         <button class="section-toggle-btn" onclick="toggleSection(this)">▲ 접기</button>
@@ -108,7 +108,7 @@
 
   <div class="section-wrap mb-3" id="section-usability" data-section="usability">
     <div class="section-hd">
-      <label><input type="checkbox" class="pdf-chk" checked /><span>2. Clinical Usability</span></label>
+      <label><input type="checkbox" class="pdf-chk" checked /><span>⭐ 2. Clinical Usability</span></label>
       <div class="flex gap-2 items-center">
         <button class="copy-md-btn" onclick="copyTabMd('usability')">📋 MD 복사</button>
         <button class="section-toggle-btn" onclick="toggleSection(this)">▲ 접기</button>
@@ -122,7 +122,7 @@
 
   <div class="section-wrap mb-3" id="section-variant" data-section="variant">
     <div class="section-hd">
-      <label><input type="checkbox" class="pdf-chk" checked /><span>7-8. Variant cases</span></label>
+      <label><input type="checkbox" class="pdf-chk" checked /><span>🧬 7-8. Variant cases</span></label>
       <div class="flex gap-2 items-center">
         <button class="copy-md-btn" onclick="copyTabMd('variant')">📋 MD 복사</button>
         <button class="section-toggle-btn" onclick="toggleSection(this)">▲ 접기</button>
@@ -136,7 +136,7 @@
 
   <div class="section-wrap mb-3" id="section-specs" data-section="specs">
     <div class="section-hd">
-      <label><input type="checkbox" class="pdf-chk" checked /><span>3-6. Specifications</span></label>
+      <label><input type="checkbox" class="pdf-chk" checked /><span>📋 3-6. Specifications</span></label>
       <div class="flex gap-2 items-center">
         <button class="copy-md-btn" onclick="copyTabMd('specs')">📋 MD 복사</button>
         <button class="section-toggle-btn" onclick="toggleSection(this)">▲ 접기</button>
@@ -150,7 +150,7 @@
 
   <div class="section-wrap mb-3" id="section-summary" data-section="summary">
     <div class="section-hd">
-      <label><input type="checkbox" class="pdf-chk" checked /><span>A. Summary (미리보기)</span></label>
+      <label><input type="checkbox" class="pdf-chk" checked /><span>📈 A. Summary (미리보기)</span></label>
       <div class="flex gap-2 items-center">
         <button class="copy-md-btn" onclick="copyTabMd('summary')">📋 MD 복사</button>
         <button class="section-toggle-btn" onclick="toggleSection(this)">▲ 접기</button>
@@ -167,6 +167,7 @@
   </footer>
 </div>
 
+<div id="pdf-print-area"></div>
 <script src="script.js"></script>
 </body>
 </html>
