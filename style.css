@@ -35,3 +35,6 @@ input.plain { border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 8px; }
 .summary-table th { background: #f1f5f9; }
 .cutoff-input { width: 60px; }
 .invalid-score { background: #fecaca !important; color: #991b1b; }
+.copy-md-btn { padding: 4px 12px; font-size: 12px; background: white; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer; white-space: nowrap; color: #475569; flex-shrink: 0; }
+.copy-md-btn:hover { background: #f1f5f9; border-color: #94a3b8; }
+.copy-md-btn.copied { color: #059669; border-color: #6ee7b7; background: #f0fdf4; }
