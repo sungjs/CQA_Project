@@ -803,7 +803,22 @@ function generateMdAll() {
     ['## 3-6. Specifications', generateMdSpecs()],
     ['## A. Summary', generateMdSummary()],
   ];
-  return sections.filter(([, md]) => md).map(([title, md]) => `${title}\n\n${md}`).join('\n\n---\n\n');
+  return sections.filter(s => s[1]).map(s => `${s[0]}\n\n${s[1]}`).join('\n\n---\n\n');
+}
+
+async function clipboardWrite(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try { await navigator.clipboard.writeText(text); return true; } catch {}
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:2em;height:2em;padding:0;border:0;outline:0;opacity:0;';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch { return false; }
 }
 
 async function copyTabMd(tab) {
@@ -815,18 +830,14 @@ async function copyTabMd(tab) {
     summary: generateMdSummary
   };
   const md = generators[tab]?.();
-  if (!md) return;
+  if (!md) { alert('복사할 데이터가 없습니다.'); return; }
   const btn = document.querySelector(`#tab-${tab} .copy-md-btn`);
-  try {
-    await navigator.clipboard.writeText(md);
-  } catch {
-    const ta = document.createElement('textarea');
-    ta.value = md; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
-  }
+  const ok = await clipboardWrite(md);
   if (btn) {
-    btn.textContent = '✅ 복사됨'; btn.classList.add('copied');
+    btn.textContent = ok ? '✅ 복사됨' : '❌ 복사 실패'; btn.classList.add('copied');
     setTimeout(() => { btn.textContent = '📋 MD 복사'; btn.classList.remove('copied'); }, 1500);
   }
+  if (!ok) alert('클립보드 복사에 실패했습니다. 브라우저 권한을 확인하세요.');
 }
 
 function init() {
@@ -840,14 +851,12 @@ function init() {
   };
   el('btnCopyAll').onclick = async () => {
     const md = generateMdAll();
-    if (!md) return;
+    if (!md) { alert('복사할 데이터가 없습니다.'); return; }
     const btn = el('btnCopyAll');
-    try { await navigator.clipboard.writeText(md); } catch {
-      const ta = document.createElement('textarea'); ta.value = md;
-      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
-    }
-    btn.textContent = '✅ 복사됨';
+    const ok = await clipboardWrite(md);
+    btn.textContent = ok ? '✅ 복사됨' : '❌ 복사 실패';
     setTimeout(() => { btn.textContent = '📋 전체 MD 복사'; }, 1500);
+    if (!ok) alert('클립보드 복사에 실패했습니다. 브라우저 권한을 확인하세요.');
   };
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.shiftKey && e.key === 'C') {
