@@ -193,14 +193,10 @@ function setupAddForms() {
   el('notionLink').oninput = (e) => { state.notionLink = e.target.value; saveState(); };
 }
 
-function setupTabs() {
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.onclick = () => {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
-      const tab = btn.dataset.tab;
-      document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('hidden', c.id !== 'tab-' + tab));
-    };
-  });
+function toggleSection(btn) {
+  const body = btn.closest('.section-wrap').querySelector('.section-bd');
+  const collapsed = body.classList.toggle('collapsed');
+  btn.textContent = collapsed ? '▼ 펼치기' : '▲ 접기';
 }
 
 const ROWHEAD_W = 160; const CELL_W = 90; const COMMENT_W = 220;
@@ -831,7 +827,7 @@ async function copyTabMd(tab) {
   };
   const md = generators[tab]?.();
   if (!md) { alert('복사할 데이터가 없습니다.'); return; }
-  const btn = document.querySelector(`#tab-${tab} .copy-md-btn`);
+  const btn = document.querySelector(`#section-${tab} .copy-md-btn`);
   const ok = await clipboardWrite(md);
   if (btn) {
     btn.textContent = ok ? '✅ 복사됨' : '❌ 복사 실패'; btn.classList.add('copied');
@@ -840,8 +836,104 @@ async function copyTabMd(tab) {
   if (!ok) alert('클립보드 복사에 실패했습니다. 브라우저 권한을 확인하세요.');
 }
 
+//==================== PDF EXPORT ====================
+function exportPDF() {
+  const selected = Array.from(document.querySelectorAll('.pdf-chk:checked'))
+    .map(cb => cb.closest('.section-wrap').dataset.section);
+  if (!selected.length) { alert('PDF에 포함할 섹션을 하나 이상 체크하세요.'); return; }
+
+  const e = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  function tbl(headers, rows) {
+    const head = '<tr>' + headers.map(h => `<th>${e(h)}</th>`).join('') + '</tr>';
+    const body = rows.map(r => '<tr>' + r.map(c => {
+      const cls = c === 'PASS' ? ' class="pass"' : c === 'FAIL' ? ' class="fail"' : '';
+      return `<td${cls}>${e(c)}</td>`;
+    }).join('') + '</tr>').join('');
+    return `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  }
+
+  const V = state.validations.length, R = state.rois.length, T = state.tests.length;
+  const sections = [];
+
+  if (selected.includes('completeness') && V && R) {
+    const headers = ['PatientID', ...state.rois, 'Comment'];
+    const rows = state.validations.map((v, vi) => [v, ...state.rois.map((_, ri) => getCell(state.completeness, vi, ri) ? '' : '-'), state.completenessComment[vi] || '']);
+    const miss = state.rois.map((_, ri) => { let m=0; for(let vi=0;vi<V;vi++) if(getCell(state.completeness,vi,ri)) m++; return m; });
+    rows.push(['Count (missing)', ...miss.map(String), '']);
+    rows.push(['Completeness', ...miss.map(m => ((V-m)/V*100).toFixed(0)+'%'), '']);
+    sections.push(`<section><h2>1. ROI Completeness</h2>${tbl(headers, rows)}</section>`);
+  }
+
+  if (selected.includes('usability') && V && R) {
+    const headers = ['PatientID', ...state.rois, 'Comment'];
+    const rows = state.validations.map((v, vi) => [v, ...state.rois.map((_, ri) => getCell(state.completeness,vi,ri) ? '❌' : (getCell(state.usability,vi,ri)||'')), state.usabilityComment[vi]||'']);
+    const stats = computeUsabilityStats();
+    rows.push(['Average', ...stats.map(s => s.avg!==null?s.avg.toFixed(2):'-'), '']);
+    rows.push(['Ratio (≤2)', ...stats.map(s => s.r2!==null?(s.r2*100).toFixed(0)+'%':'-'), '']);
+    rows.push(['Ratio (≤3)', ...stats.map(s => s.r3!==null?(s.r3*100).toFixed(0)+'%':'-'), '']);
+    rows.push(['Cutoff type', ...state.roiCutoffs, '']);
+    rows.push(['PASS / FAIL', ...stats.map(s => s.pass||'-'), '']);
+    sections.push(`<section><h2>2. Clinical Usability</h2>${tbl(headers, rows)}</section>`);
+  }
+
+  if (selected.includes('variant') && T && R) {
+    const headers = ['PatientID', ...state.rois, 'Comment'];
+    const rows = state.tests.map((t, ti) => [t, ...state.rois.map((_, ri) => getCell(state.variant,ti,ri)||''), state.variantComment[ti]||'']);
+    const avgs = state.rois.map((_, ri) => { const sc=[]; for(let ti=0;ti<T;ti++){const s=getCell(state.variant,ti,ri);if(s&&!isNaN(+s))sc.push(+s);} return sc.length?(sc.reduce((a,b)=>a+b,0)/sc.length).toFixed(2):'-'; });
+    rows.push(['Average', ...avgs, '']);
+    sections.push(`<section><h2>7-8. Variant cases</h2>${tbl(headers, rows)}</section>`);
+  }
+
+  if (selected.includes('specs') && R) {
+    const us = computeUsabilityStats(), cp = computeCompletenessStats();
+    const headers = ['ROI', 'Cutoff', 'Comp.', 'PASS/FAIL', 'Avg', ...CRITERIA, 'Comment', 'Improvement required'];
+    const rows = state.rois.map((roi, ri) => {
+      const u = us[ri], imp = CRITERIA.filter((_, ci) => getCell(state.specs,ri,ci));
+      return [roi, state.roiCutoffs[ri], (cp[ri].completeness*100).toFixed(0)+'%', u.pass||'-', u.avg!==null?u.avg.toFixed(2):'-', ...CRITERIA.map((_,ci) => getCell(state.specs,ri,ci)?String(Math.round(u.avg)):''), state.specsComment[ri]||'', imp.join(', ')];
+    });
+    sections.push(`<section><h2>3-6. Specifications</h2>${tbl(headers, rows)}</section>`);
+  }
+
+  if (selected.includes('summary')) {
+    const us = computeUsabilityStats(), cp = computeCompletenessStats();
+    const headers = ['ROI', 'Cutoff', 'PASS/FAIL', 'Avg', 'Ratio(≤2)', 'Ratio(≤3)', 'Completeness', 'Improvement'];
+    const rows = state.rois.map((roi, ri) => {
+      const u = us[ri], imp = CRITERIA.filter((_,ci) => getCell(state.specs,ri,ci));
+      return [roi, state.roiCutoffs[ri], u.pass||'-', u.avg!==null?u.avg.toFixed(2):'-', u.r2!==null?(u.r2*100).toFixed(0)+'%':'-', u.r3!==null?(u.r3*100).toFixed(0)+'%':'-', (cp[ri].completeness*100).toFixed(0)+'%', imp.join(', ')];
+    });
+    const passed = state.rois.filter((_,ri) => us[ri].pass==='PASS').join(', ')||'-';
+    const failed = state.rois.filter((_,ri) => us[ri].pass==='FAIL').join(', ')||'-';
+    sections.push(`<section><h2>A. Summary</h2>${tbl(headers, rows)}<p><b>Passed:</b> <span class="pass">${e(passed)}</span></p><p><b>Failed:</b> <span class="fail">${e(failed)}</span></p>${state.notionLink?`<p><b>총평:</b> ${e(state.notionLink)}</p>`:''}</section>`);
+  }
+
+  if (!sections.length) { alert('선택한 섹션에 출력할 데이터가 없습니다.'); return; }
+
+  const win = window.open('', '_blank');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>${e(state.projectName)} - CQA Report</title>
+  <style>
+    body{font-family:"Malgun Gothic","맑은 고딕",sans-serif;font-size:10px;margin:20px;color:#1e293b;}
+    h1{font-size:15px;margin-bottom:2px;} .meta{font-size:10px;color:#64748b;margin-bottom:16px;}
+    h2{font-size:12px;margin:20px 0 6px;color:#3730a3;border-bottom:1px solid #e2e8f0;padding-bottom:3px;}
+    table{border-collapse:collapse;width:100%;margin-bottom:8px;font-size:9px;}
+    th,td{border:1px solid #cbd5e1;padding:3px 5px;text-align:center;}
+    th{background:#f1f5f9;font-weight:600;}
+    tr:nth-child(even) td{background:#f8fafc;}
+    .pass{color:#059669;font-weight:600;} .fail{color:#dc2626;font-weight:600;}
+    section{page-break-inside:avoid;margin-bottom:12px;}
+    p{margin:4px 0;font-size:10px;}
+    @media print{body{margin:10px;}}
+  </style></head><body>
+  <h1>${e(state.projectName)} — CQA Report</h1>
+  <div class="meta">${new Date().toLocaleDateString('ko-KR', {year:'numeric',month:'long',day:'numeric'})}</div>
+  ${sections.join('\n')}
+  <script>window.onload=()=>{window.print();}<\/script>
+  </body></html>`);
+  win.document.close();
+}
+
 function init() {
-  renderLists(); setupAddForms(); setupTabs(); renderAll();
+  renderLists(); setupAddForms(); renderAll();
   el('btnDownload').onclick = downloadXLSX; el('btnSave').onclick = exportJSON;
   el('btnLoad').onclick = () => el('fileInput').click();
   el('fileInput').onchange = (e) => { if (e.target.files[0]) importJSON(e.target.files[0]); };
@@ -858,13 +950,7 @@ function init() {
     setTimeout(() => { btn.textContent = '📋 전체 MD 복사'; }, 1500);
     if (!ok) alert('클립보드 복사에 실패했습니다. 브라우저 권한을 확인하세요.');
   };
-  document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.shiftKey && e.key === 'C') {
-      e.preventDefault();
-      const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
-      if (activeTab) copyTabMd(activeTab);
-    }
-  });
+  el('btnExportPdf').onclick = exportPDF;
 }
 
 window.addEventListener('DOMContentLoaded', init);
