@@ -141,6 +141,55 @@
 - 데이터 표 tabular nums 자동
 - 4-state cell에 색상 + 좌측 strip dual signal
 
+---
+
+## Iteration 6 — 마지막 평가 후 미세 폴리시
+
+### 평가 발견점
+- **사이드바 active model row** — bg만으로 활성 표시 → 위계가 약함. 다른 항목과 차이가 한눈에 안 들어옴
+- **active reviewer item**도 같은 이슈
+- **모바일 사이드바** — 펼쳤을 때 본문 위에 떠 있어도 본문이 그대로 보임. 사용자 시선 혼란
+- **모션 환경설정** — `prefers-reduced-motion` 미고려 (전정장애 사용자 접근성)
+
+### Change
+1. **Active model row 좌측 3px 인디고 bar** — `::before` pseudo, 6px top/bottom inset. bg + indicator dual signal. 5-10개 모델 중에서도 활성 항목 즉시 시각 인지
+2. **Active reviewer item 좌측 2px bar** — 동일 패턴, 좀 더 얇게 (계층 위계)
+3. **모바일 사이드바 dim overlay** — `body::after`로 viewport 전체에 rgba(15,23,42,0.32). 사이드바 펼침 = 모달 비슷한 컨텍스트 강조
+4. **`prefers-reduced-motion` 대응** — 모든 transition/animation 0.01ms로 단축. sync status pulse도 정지
+
+### Why
+- Bg + accent strip dual signal은 modern apps의 사이드바 표준 (Linear, Notion, GitHub 모두 비슷)
+- WCAG 2.1 Success Criterion 2.3.3 (Animation from interactions) 권고
+- 모바일에서 overlay dim은 사이드바를 모달처럼 다루는 UX 컨벤션
+
+---
+
+## 종합 평가
+
+### 5+ iteration 누적 결과
+
+| 영역 | Before | After |
+|------|--------|-------|
+| 색상 관리 | 50+ hex 하드코드 | `:root` design token + 0 잔여 hex |
+| Gradient | 12+ 인스턴스 | 0 |
+| Shadow | 카드/섹션/버튼/chip 모두 | 카드 1단계 + sync indicator만 |
+| Hover 효과 | translateY + shadow + bg | bg/color 변경만 (차분) |
+| Radius | 4/6/8/10/12/16/20/9999 mixed | xs/sm/md/lg/pill 5단계 |
+| Font | system stack | Pretendard Variable |
+| Tabular nums | 일부 | 데이터 표 자동 |
+| Active state 위계 | bg color만 | bg + accent strip dual |
+| 색약 접근성 | 색상만 | 색 + 형태 dual (strip) |
+| Reduced motion | 미대응 | `prefers-reduced-motion` 처리 |
+| 디자인 토큰화 | 없음 | 80+ token + 다크모드 future-proof |
+
+### 다음에 시도할 만한 (시간 부족으로 미적용)
+- 다크 모드 (token이 준비됐으니 `[data-theme="dark"]` 정의만 추가)
+- 카드 그룹화 (Cutoff + ROI/Val/Test를 하나의 "Setup" 그룹으로)
+- Section accordion smooth expand/collapse 애니메이션 (현재 display: none 즉시 토글)
+- Toast notification 시스템 (현재 alert 사용 중)
+- 키보드 단축키 cheatsheet 모달
+
+
 
 
 

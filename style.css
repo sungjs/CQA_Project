@@ -462,6 +462,11 @@ body.sidebar-collapsed #sidebar { transform: translateX(-100%); }
   background: var(--accent-soft);
   color: var(--accent-text);
 }
+.project-list .model-item.active > .model-row::before {
+  content: ''; position: absolute; left: -2px; top: 6px; bottom: 6px;
+  width: 3px; background: var(--accent);
+  border-radius: 2px;
+}
 .project-list .model-item.active > .model-row .project-name { font-weight: 600; }
 .project-list .chevron {
   background: none; border: 0; cursor: pointer;
@@ -509,6 +514,10 @@ body.sidebar-collapsed #sidebar { transform: translateX(-100%); }
 .reviewer-list .reviewer-item.active {
   background: var(--accent-soft); color: var(--accent-text);
   font-weight: 600;
+}
+.reviewer-list .reviewer-item.active::before {
+  content: ''; position: absolute; left: -2px; top: 5px; bottom: 5px;
+  width: 2px; background: var(--accent); border-radius: 2px;
 }
 .reviewer-list .reviewer-name {
   flex: 1; min-width: 0;
@@ -559,6 +568,23 @@ body.sidebar-collapsed #appMain { margin-left: 0; }
 @media (max-width: 900px) {
   body:not(.sidebar-collapsed) #appMain { margin-left: 0; }
   #sidebar { box-shadow: var(--shadow-elevated); }
+  /* 모바일에서 사이드바 펼쳤을 때 본문에 dim overlay */
+  body:not(.sidebar-collapsed)::after {
+    content: ''; position: fixed; inset: 0;
+    background: rgba(15, 23, 42, 0.32);
+    z-index: 35; pointer-events: none;
+  }
+}
+
+/* ================================================================
+ * Reduced motion 사용자 존중
+ * ================================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+  #syncStatus.sync-pending::before { animation: none; }
 }
 
 /* ================================================================
