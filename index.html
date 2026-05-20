@@ -6,17 +6,53 @@
   <title>CQA Input Tool</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+  <!-- Firebase compat SDK (글로벌 `firebase` 노출). -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body class="bg-slate-50 text-slate-800">
 
-<div class="max-w-[1600px] mx-auto p-4">
-  <header class="flex items-center justify-between mb-4">
+<!-- 좌측 프로젝트 사이드바 (로그인 시 표시) -->
+<aside id="sidebar" class="hidden">
+  <div class="sidebar-hd">
+    <button id="btnSidebarToggle" class="sidebar-toggle" title="사이드바 접기/펼치기">☰</button>
+    <span class="sidebar-title">MODELS</span>
+  </div>
+  <div class="sidebar-actions">
+    <button id="btnNewProject" class="btn btn-sm w-full" title="새 모델">＋ 새 모델</button>
+    <button id="btnJoinProject" class="btn btn-sm w-full" title="모델 ID로 참여">🔗 모델 ID로 참여</button>
+  </div>
+  <ul id="projectList" class="project-list"></ul>
+</aside>
+
+<!-- 사이드바 펼치기 토글 (collapsed 상태일 때만 보임) -->
+<button id="btnSidebarOpen" class="sidebar-open-btn hidden" title="사이드바 열기">☰</button>
+
+<div id="appMain" class="max-w-[1600px] mx-auto p-4">
+  <div id="readOnlyBanner" class="read-only-banner hidden">
+    🔒 <b>읽기 전용 (Legacy 평가)</b> · 변경 내용은 저장되지 않습니다. XLSX/PDF/MD 내보내기는 가능합니다.
+  </div>
+  <header class="flex items-center justify-between mb-4 flex-wrap gap-3">
     <div>
       <h1 class="text-2xl font-bold text-slate-900">🧪 CQA Input Tool</h1>
       <p class="text-sm text-slate-500">ROI/환자 수를 자유롭게 조정하면서 CQA 결과를 입력하고 한 번에 xlsx로 내보냅니다.</p>
     </div>
-    <div class="flex gap-2 flex-wrap">
+    <div class="flex gap-2 flex-wrap items-center">
+      <!-- 클라우드 동기화 상태 -->
+      <div id="syncStatus" class="text-xs text-slate-500 px-2" title="저장 상태">로컬 모드</div>
+
+      <!-- 인증 (로그아웃 상태) -->
+      <button id="btnSignIn" class="btn hidden">🔐 Google 로그인</button>
+      <!-- 인증 (로그인 상태) -->
+      <div id="userInfo" class="hidden items-center gap-2 text-sm">
+        <span id="userEmail" class="text-slate-600"></span>
+        <button id="btnSignOut" class="btn-link">로그아웃</button>
+      </div>
+
+      <span class="text-slate-300">|</span>
+
       <button id="btnLoad" class="btn">📂 JSON 불러오기</button>
       <button id="btnSave" class="btn">💾 JSON 저장</button>
       <button id="btnClear" class="btn">🗑 초기화</button>
@@ -30,7 +66,7 @@
   <div class="card mb-4">
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <label class="text-sm">
-        <span class="block font-medium mb-1">프로젝트 이름 (파일명)</span>
+        <span class="block font-medium mb-1">모델명 (파일명)</span>
         <input id="projectName" class="plain w-full" />
       </label>
       <label class="text-sm">
@@ -40,54 +76,74 @@
     </div>
   </div>
 
-  <div class="card mb-4">
-    <div class="flex items-center justify-between mb-2">
+  <div class="card mb-4 collapsible collapsed">
+    <div class="card-hd" onclick="toggleCard(this)">
       <h3 class="font-semibold text-sm">🎚 Cutoff 기준 정의</h3>
-      <span class="text-xs text-slate-500">각 타입별 임계값을 자유롭게 조정할 수 있습니다.</span>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-slate-500">각 타입별 임계값을 자유롭게 조정</span>
+        <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
+      </div>
     </div>
-    <table class="text-sm w-full">
-      <thead>
-        <tr class="text-slate-500 text-xs">
-          <th class="text-left w-16">Type</th>
-          <th class="text-center">평균 ≥</th>
-          <th class="text-center">점수 이하 기준 (N점)</th>
-          <th class="text-center">비율 ≤</th>
-          <th class="text-left pl-4">해석</th>
-        </tr>
-      </thead>
-      <tbody id="cutoffBody"></tbody>
-    </table>
+    <div class="card-bd">
+      <table class="text-sm w-full">
+        <thead>
+          <tr class="text-slate-500 text-xs">
+            <th class="text-left w-16">Type</th>
+            <th class="text-center">평균 ≥</th>
+            <th class="text-center">점수 이하 기준 (N점)</th>
+            <th class="text-center">비율 ≤</th>
+            <th class="text-left pl-4">해석</th>
+          </tr>
+        </thead>
+        <tbody id="cutoffBody"></tbody>
+      </table>
+    </div>
   </div>
 
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-    <div class="card">
-      <h3 class="font-semibold text-sm mb-2">🎯 ROI 목록 (<span id="roiCount">0</span>) <span class="text-xs font-normal text-slate-400">— Cutoff 타입 선택</span></h3>
-      <div id="roiList" class="flex flex-wrap gap-1 mb-2 min-h-[36px]"></div>
-      <form id="roiAddForm" class="flex gap-1">
-        <input id="roiAddInput" class="plain flex-1 text-sm" placeholder="ROI 이름 입력 후 Enter" />
-        <button class="btn btn-dark btn-sm">추가</button>
-      </form>
-    </div>
-    <div class="card">
-      <h3 class="font-semibold text-sm mb-2">🧑‍⚕️ Validation 환자 (<span id="valCount">0</span>)</h3>
-      <div id="valList" class="flex flex-wrap gap-1 mb-2 min-h-[36px]"></div>
-      <form id="valAddForm" class="flex gap-1">
-        <input id="valAddInput" class="plain flex-1 text-sm" placeholder="환자 ID 입력 후 Enter" />
-        <button class="btn btn-dark btn-sm">추가</button>
-      </form>
-      <div class="mt-2">
-        <button id="valBulkBtn" class="btn-link">일괄 입력 (콤마/줄바꿈)</button>
+    <div class="card collapsible collapsed">
+      <div class="card-hd" onclick="toggleCard(this)">
+        <h3 class="font-semibold text-sm">🎯 ROI 목록 (<span id="roiCount">0</span>) <span class="text-xs font-normal text-slate-400">— Cutoff</span></h3>
+        <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
+      </div>
+      <div class="card-bd">
+        <div id="roiList" class="chip-list mb-2"></div>
+        <form id="roiAddForm" class="flex gap-1">
+          <input id="roiAddInput" class="plain flex-1 text-sm" placeholder="ROI 이름 입력 후 Enter" />
+          <button class="btn btn-dark btn-sm">추가</button>
+        </form>
       </div>
     </div>
-    <div class="card">
-      <h3 class="font-semibold text-sm mb-2">🧪 Test 환자 (7-8 Variant) (<span id="testCount">0</span>)</h3>
-      <div id="testList" class="flex flex-wrap gap-1 mb-2 min-h-[36px]"></div>
-      <form id="testAddForm" class="flex gap-1">
-        <input id="testAddInput" class="plain flex-1 text-sm" placeholder="Test ID 입력 후 Enter" />
-        <button class="btn btn-dark btn-sm">추가</button>
-      </form>
-      <div class="mt-2">
-        <button id="testBulkBtn" class="btn-link">일괄 입력 (콤마/줄바꿈)</button>
+    <div class="card collapsible collapsed">
+      <div class="card-hd" onclick="toggleCard(this)">
+        <h3 class="font-semibold text-sm">🧑‍⚕️ Validation 환자 (<span id="valCount">0</span>)</h3>
+        <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
+      </div>
+      <div class="card-bd">
+        <div id="valList" class="chip-list mb-2"></div>
+        <form id="valAddForm" class="flex gap-1">
+          <input id="valAddInput" class="plain flex-1 text-sm" placeholder="환자 ID 입력 후 Enter" />
+          <button class="btn btn-dark btn-sm">추가</button>
+        </form>
+        <div class="mt-2">
+          <button id="valBulkBtn" class="btn-link">일괄 입력 (콤마/줄바꿈)</button>
+        </div>
+      </div>
+    </div>
+    <div class="card collapsible collapsed">
+      <div class="card-hd" onclick="toggleCard(this)">
+        <h3 class="font-semibold text-sm">🧪 Test 환자 (7-8 Variant) (<span id="testCount">0</span>)</h3>
+        <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
+      </div>
+      <div class="card-bd">
+        <div id="testList" class="chip-list mb-2"></div>
+        <form id="testAddForm" class="flex gap-1">
+          <input id="testAddInput" class="plain flex-1 text-sm" placeholder="Test ID 입력 후 Enter" />
+          <button class="btn btn-dark btn-sm">추가</button>
+        </form>
+        <div class="mt-2">
+          <button id="testBulkBtn" class="btn-link">일괄 입력 (콤마/줄바꿈)</button>
+        </div>
       </div>
     </div>
   </div>
@@ -163,11 +219,12 @@
   </div>
 
   <footer class="text-center text-xs text-slate-400 mt-8 py-4">
-    CQA Input Tool · 데이터는 브라우저 localStorage에 자동 저장됩니다.
+    CQA Input Tool · 로그인 시 Firestore 자동 동기화, 로그아웃 시 브라우저 localStorage 저장.
   </footer>
 </div>
 
 <div id="pdf-print-area"></div>
+<script src="firebase-config.js"></script>
 <script src="script.js"></script>
 </body>
 </html>

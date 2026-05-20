@@ -1,7 +1,26 @@
 //==================== STATE ====================
 const LS_KEY = 'cqa_input_tool_v2';
+const LAST_PROJECT_LS_KEY = (uid) => `cqa_last_project_${uid}`;
+const SCHEMA_VERSION = 1;
 const CRITERIA = ['3. Anatomical accuracy', '4. Over-segmentation', '5. Under-segmentation', '6. Smoothness'];
 const CUTOFF_TYPES = ['A', 'B', 'C'];
+const REVIEW_KEYS = ['completeness', 'completenessComment', 'usability', 'usabilityComment', 'variant', 'variantComment', 'specs', 'specsComment'];
+
+// Firebase 핸들 (init에서 채워짐, 미설정 시 null 유지)
+let firebaseApp = null, fbAuth = null, fbDb = null, firebaseReady = false;
+
+// 클라우드 동기화 상태
+let currentUser = null;
+let currentProjectId = null;
+let currentReviewerId = null;   // 현재 보고 있는 평가자의 uid (null = legacy 모드)
+let currentReadOnly = false;    // legacy or 타인 평가 보기 시 true — 모든 쓰기 차단
+let userProjects = [];
+const modelReviewersCache = new Map();   // modelId -> [{ uid, reviewerEmail, updatedAt, ... }]
+const expandedModels = new Set();
+let saveTimer = null;
+let saveInFlight = null;
+let pendingDirty = false;
+let suppressSave = false;
 
 function defaultState() {
   return {
@@ -30,7 +49,10 @@ function defaultState() {
 let state = loadState() || defaultState();
 
 function saveState() {
+  if (suppressSave) return;
+  if (currentReadOnly) return;   // legacy 평가는 변경사항 저장 안 함
   try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch(e) {}
+  scheduleCloudSave();
 }
 function loadState() {
   try {
@@ -63,6 +85,543 @@ function setCell(obj, i, j, val) {
     if (Object.keys(obj[i]).length === 0) delete obj[i];
   } else {
     obj[i][j] = val;
+  }
+}
+
+//==================== CLOUD SYNC ====================
+function projectConfigFromState() {
+  return {
+    name: state.projectName || 'Untitled',
+    notionLink: state.notionLink || '',
+    cutoffDefs: state.cutoffDefs,
+    rois: state.rois, roiCutoffs: state.roiCutoffs,
+    validations: state.validations, tests: state.tests,
+    schemaVersion: SCHEMA_VERSION,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+  };
+}
+function reviewFromState() {
+  const r = { schemaVersion: SCHEMA_VERSION, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+  if (currentUser?.email) r.reviewerEmail = currentUser.email;
+  REVIEW_KEYS.forEach(k => { r[k] = state[k] || {}; });
+  return r;
+}
+
+function setSyncStatus(kind, text) {
+  const elS = el('syncStatus');
+  if (!elS) return;
+  elS.className = ''; if (kind) elS.classList.add('sync-' + kind);
+  elS.textContent = text;
+}
+
+function scheduleCloudSave() {
+  if (!firebaseReady || !currentUser || !currentProjectId) return;
+  if (currentReadOnly) return;
+  pendingDirty = true;
+  setSyncStatus('pending', '저장 중…');
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushCloudSave, 800);
+}
+
+async function flushCloudSave() {
+  if (!firebaseReady || !currentUser || !currentProjectId) return;
+  if (saveInFlight) await saveInFlight;
+  if (!pendingDirty) return;
+  pendingDirty = false;
+  const projectRef = fbDb.collection('projects').doc(currentProjectId);
+  const reviewRef  = projectRef.collection('reviews').doc(currentUser.uid);
+  saveInFlight = (async () => {
+    try {
+      await Promise.all([
+        projectRef.set(projectConfigFromState(), { merge: true }),
+        reviewRef.set(reviewFromState(),         { merge: true }),
+      ]);
+      // 평가자 캐시 무효화 — 다음 expand 시 최신 updatedAt 반영
+      modelReviewersCache.delete(currentProjectId);
+      setSyncStatus('saved', '☁ 저장됨');
+    } catch (e) {
+      console.error('Cloud save failed:', e);
+      setSyncStatus('error', '⚠ 저장 실패 (재시도 대기)');
+      pendingDirty = true;
+      setTimeout(flushCloudSave, 5000);
+    }
+  })();
+  await saveInFlight;
+  saveInFlight = null;
+}
+
+function applyProjectConfigToState(projectData) {
+  const def = defaultState();
+  suppressSave = true;
+  try {
+    state.projectName = projectData.name || def.projectName;
+    state.notionLink  = projectData.notionLink || '';
+    state.cutoffDefs  = projectData.cutoffDefs || def.cutoffDefs;
+    state.rois        = projectData.rois || [];
+    state.roiCutoffs  = projectData.roiCutoffs || state.rois.map(() => 'A');
+    state.validations = projectData.validations || [];
+    state.tests       = projectData.tests || [];
+  } finally { suppressSave = false; }
+}
+function applyReviewToState(reviewData) {
+  suppressSave = true;
+  try {
+    REVIEW_KEYS.forEach(k => { state[k] = (reviewData && reviewData[k]) || {}; });
+  } finally { suppressSave = false; }
+}
+
+// modelId의 특정 평가자 데이터 로드. reviewerUid가 currentUser와 다르면 자동 읽기 전용.
+async function loadReviewerEvaluation(modelId, reviewerUid) {
+  if (!firebaseReady || !currentUser) return false;
+  if (pendingDirty) await flushCloudSave();
+  try {
+    setSyncStatus('pending', '불러오는 중…');
+    const projectRef = fbDb.collection('projects').doc(modelId);
+    const reviewRef  = projectRef.collection('reviews').doc(reviewerUid);
+    const [pSnap, rSnap] = await Promise.all([projectRef.get(), reviewRef.get()]);
+    if (!pSnap.exists) { alert('모델을 찾을 수 없습니다.'); return false; }
+    applyProjectConfigToState(pSnap.data());
+    applyReviewToState(rSnap.exists ? rSnap.data() : null);
+    currentProjectId = modelId;
+    currentReviewerId = reviewerUid;
+    currentReadOnly = reviewerUid !== currentUser.uid;
+    try { localStorage.setItem(LAST_PROJECT_LS_KEY(currentUser.uid), modelId); } catch(e) {}
+    renderAll();
+    updateReadOnlyBanner();
+    renderProjectPicker();
+    setSyncStatus(currentReadOnly ? 'offline' : 'saved', currentReadOnly ? '🔒 타인 평가 (읽기 전용)' : '☁ 저장됨');
+    return true;
+  } catch (e) {
+    console.error('Load reviewer failed:', e);
+    setSyncStatus('error', '⚠ 불러오기 실패');
+    return false;
+  }
+}
+
+// 통합 진입점. legacy면 별도 분기, 일반 모델이면 본인 review 로드.
+async function loadProjectFromCloud(projectId) {
+  if (!firebaseReady || !currentUser) return false;
+  if (pendingDirty) await flushCloudSave();
+
+  const entry = userProjects.find(p => p.id === projectId);
+  const isLegacy = !!entry?._legacy;
+
+  if (isLegacy) {
+    try {
+      setSyncStatus('pending', '불러오는 중…');
+      const ref = fbDb.collection('evaluations').doc(projectId);
+      const snap = await ref.get();
+      if (!snap.exists) { alert('Legacy 평가를 찾을 수 없습니다.'); return false; }
+      applyLegacyEvaluationToState(snap.data());
+      currentProjectId = projectId;
+      currentReviewerId = null;
+      currentReadOnly = true;
+      renderAll();
+      updateReadOnlyBanner();
+      renderProjectPicker();
+      setSyncStatus('offline', '🔒 읽기 전용 (Legacy)');
+      return true;
+    } catch (e) {
+      console.error('Load legacy failed:', e);
+      setSyncStatus('error', '⚠ 불러오기 실패');
+      return false;
+    }
+  }
+  return loadReviewerEvaluation(projectId, currentUser.uid);
+}
+
+function slugifyProjectId(name) {
+  const base = String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40) || 'project';
+  return `${base}_${Date.now().toString(36)}`;
+}
+
+async function createCloudProject(name, seedFromCurrentState) {
+  if (!firebaseReady || !currentUser) return null;
+  const projectId = slugifyProjectId(name);
+  const baseConfig = seedFromCurrentState
+    ? { ...projectConfigFromState(), name }
+    : { ...projectConfigFromState(), name, rois: [], roiCutoffs: [], validations: [], tests: [] };
+  const projectDoc = {
+    ...baseConfig,
+    owner: currentUser.uid,
+    members: [currentUser.uid],
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+  };
+  const projectRef = fbDb.collection('projects').doc(projectId);
+  await projectRef.set(projectDoc);
+  if (seedFromCurrentState) {
+    await projectRef.collection('reviews').doc(currentUser.uid).set(reviewFromState());
+  }
+  return projectId;
+}
+
+async function fetchUserProjects() {
+  if (!firebaseReady || !currentUser) return [];
+  try {
+    const snap = await fbDb.collection('projects')
+      .where('members', 'array-contains', currentUser.uid).get();
+    const list = [];
+    snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+    list.sort((a, b) => (b.updatedAt?.toMillis?.() || 0) - (a.updatedAt?.toMillis?.() || 0));
+    return list;
+  } catch (e) {
+    console.error('fetchUserProjects failed:', e);
+    setSyncStatus('error', '⚠ 목록 로드 실패: ' + (e.code || e.message));
+    return [];
+  }
+}
+
+async function fetchModelReviewers(modelId) {
+  if (modelReviewersCache.has(modelId)) return modelReviewersCache.get(modelId);
+  if (!firebaseReady || !currentUser) return [];
+  try {
+    const snap = await fbDb.collection('projects').doc(modelId).collection('reviews').get();
+    const list = [];
+    snap.forEach(d => list.push({ uid: d.id, ...d.data() }));
+    list.sort((a, b) => (b.updatedAt?.toMillis?.() || 0) - (a.updatedAt?.toMillis?.() || 0));
+    modelReviewersCache.set(modelId, list);
+    return list;
+  } catch (e) {
+    console.error('fetchModelReviewers failed:', e);
+    return [];
+  }
+}
+
+async function toggleModelExpand(modelId) {
+  if (expandedModels.has(modelId)) {
+    expandedModels.delete(modelId);
+  } else {
+    expandedModels.add(modelId);
+    await fetchModelReviewers(modelId);
+  }
+  renderProjectPicker();
+}
+
+async function fetchLegacyEvaluations() {
+  if (!firebaseReady || !currentUser) return [];
+  try {
+    const snap = await fbDb.collection('evaluations').get();
+    const list = [];
+    snap.forEach(d => {
+      const data = d.data() || {};
+      list.push({
+        id: d.id,
+        _legacy: true,
+        name: data.projectName || data.name || d.id,
+        updatedAt: data.updatedAt || data.createdAt || null,
+        owner: null,
+        ...data,
+      });
+    });
+    list.sort((a, b) => (b.updatedAt?.toMillis?.() || 0) - (a.updatedAt?.toMillis?.() || 0));
+    return list;
+  } catch (e) {
+    console.warn('fetchLegacyEvaluations failed (스킵):', e);
+    return [];
+  }
+}
+
+function applyLegacyEvaluationToState(data) {
+  const def = defaultState();
+  suppressSave = true;
+  try {
+    state.projectName = data.projectName || data.name || def.projectName;
+    state.notionLink  = data.notionLink || '';
+    state.cutoffDefs  = data.cutoffDefs || def.cutoffDefs;
+    state.rois        = data.rois || [];
+    state.roiCutoffs  = data.roiCutoffs || state.rois.map(() => 'A');
+    state.validations = data.validations || [];
+    state.tests       = data.tests || [];
+    REVIEW_KEYS.forEach(k => { state[k] = data[k] || {}; });
+  } finally { suppressSave = false; }
+}
+
+function updateReadOnlyBanner() {
+  const banner = el('readOnlyBanner');
+  if (!banner) return;
+  banner.classList.toggle('hidden', !currentReadOnly);
+  if (!currentReadOnly) return;
+  const entry = userProjects.find(p => p.id === currentProjectId);
+  if (entry?._legacy) {
+    banner.innerHTML = '🔒 <b>읽기 전용 (Legacy 평가)</b> · 변경 내용은 저장되지 않습니다. XLSX/PDF/MD 내보내기는 가능합니다.';
+  } else if (currentReviewerId && currentReviewerId !== currentUser?.uid) {
+    banner.innerHTML = '🔒 <b>다른 평가자의 데이터 보기</b> · 변경 내용은 저장되지 않습니다. 내 평가로 돌아가려면 사이드바에서 모델명을 클릭하세요.';
+  }
+}
+
+function formatRelativeTime(ts) {
+  if (!ts || !ts.toMillis) return '';
+  const diffMs = Date.now() - ts.toMillis();
+  if (diffMs < 60_000) return '방금';
+  if (diffMs < 3600_000) return Math.floor(diffMs / 60_000) + '분 전';
+  if (diffMs < 86400_000) return Math.floor(diffMs / 3600_000) + '시간 전';
+  if (diffMs < 30 * 86400_000) return Math.floor(diffMs / 86400_000) + '일 전';
+  return new Date(ts.toMillis()).toLocaleDateString('ko-KR');
+}
+
+function renderProjectPicker() {
+  const list = el('projectList'); if (!list) return;
+  list.innerHTML = '';
+  if (userProjects.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = '모델이 없습니다';
+    list.appendChild(li);
+    return;
+  }
+  userProjects.forEach(p => {
+    const li = document.createElement('li');
+    li.className = 'model-item';
+    if (p.id === currentProjectId) li.classList.add('active');
+    if (p._legacy) li.classList.add('legacy');
+    li.title = p.id + (p._legacy ? ' (Legacy 평가, 읽기 전용)' : '');
+
+    const row = document.createElement('div');
+    row.className = 'model-row';
+
+    if (p._legacy) {
+      const lock = document.createElement('span');
+      lock.className = 'chevron chevron-disabled';
+      lock.textContent = '🔒';
+      row.appendChild(lock);
+    } else {
+      const chevron = document.createElement('button');
+      chevron.type = 'button';
+      chevron.className = 'chevron';
+      chevron.textContent = expandedModels.has(p.id) ? '▼' : '▶';
+      chevron.onclick = (e) => { e.stopPropagation(); toggleModelExpand(p.id); };
+      row.appendChild(chevron);
+    }
+
+    const nameWrap = document.createElement('div');
+    nameWrap.className = 'model-name-wrap';
+    const time = formatRelativeTime(p.updatedAt);
+    let tag = '';
+    if (p._legacy) tag = ' · <span class="legacy-tag">Legacy</span>';
+    else if (p.owner !== currentUser?.uid) tag = ' · <span class="shared-tag">공유</span>';
+    nameWrap.innerHTML = `<span class="project-name">${esc(p.name || p.id)}</span><span class="project-meta">${time}${tag}</span>`;
+    nameWrap.onclick = () => {
+      if (p._legacy) {
+        if (p.id !== currentProjectId) loadProjectFromCloud(p.id);
+      } else {
+        // 모델명 클릭 = 내 평가 로드
+        if (p.id !== currentProjectId || currentReviewerId !== currentUser?.uid) {
+          loadReviewerEvaluation(p.id, currentUser.uid);
+        }
+      }
+    };
+    row.appendChild(nameWrap);
+    li.appendChild(row);
+
+    // 펼친 상태이고 legacy가 아니면 평가자 리스트
+    if (!p._legacy && expandedModels.has(p.id)) {
+      const reviewers = modelReviewersCache.get(p.id) || [];
+      const ul = document.createElement('ul');
+      ul.className = 'reviewer-list';
+      // 본인이 reviewers에 없으면 placeholder로 추가 (아직 평가 안 한 상태)
+      const hasSelf = reviewers.some(r => r.uid === currentUser?.uid);
+      const allReviewers = hasSelf ? reviewers : [{ uid: currentUser.uid, reviewerEmail: currentUser.email, _placeholder: true }, ...reviewers];
+      if (allReviewers.length === 0) {
+        const empty = document.createElement('li');
+        empty.className = 'reviewer-empty';
+        empty.textContent = '평가자 없음';
+        ul.appendChild(empty);
+      } else {
+        allReviewers.forEach(r => {
+          const rLi = document.createElement('li');
+          rLi.className = 'reviewer-item';
+          if (p.id === currentProjectId && r.uid === currentReviewerId) rLi.classList.add('active');
+          const isSelf = r.uid === currentUser?.uid;
+          const shortName = (r.reviewerEmail || r.uid).split('@')[0];
+          const selfTag = isSelf ? ' <span class="self-tag">(나)</span>' : '';
+          const meta = r._placeholder ? '<span class="placeholder">미평가</span>' : formatRelativeTime(r.updatedAt);
+          rLi.innerHTML = `<span class="reviewer-name">👤 ${esc(shortName)}${selfTag}</span><span class="reviewer-meta">${meta}</span>`;
+          rLi.onclick = (e) => {
+            e.stopPropagation();
+            if (!(p.id === currentProjectId && r.uid === currentReviewerId)) {
+              loadReviewerEvaluation(p.id, r.uid);
+            }
+          };
+          ul.appendChild(rLi);
+        });
+      }
+      li.appendChild(ul);
+    }
+
+    list.appendChild(li);
+  });
+}
+
+async function joinCloudProject(projectId) {
+  if (!firebaseReady || !currentUser) return false;
+  try {
+    const projectRef = fbDb.collection('projects').doc(projectId);
+    const snap = await projectRef.get();
+    if (!snap.exists) { alert('모델 ID를 찾을 수 없습니다.'); return false; }
+    const data = snap.data();
+    if (!data.members?.includes(currentUser.uid)) {
+      await projectRef.update({
+        members: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+    userProjects = await fetchUserProjects();
+    renderProjectPicker();
+    await loadProjectFromCloud(projectId);
+    return true;
+  } catch (e) {
+    console.error('Join failed:', e);
+    alert('모델 참여 실패: ' + e.message);
+    return false;
+  }
+}
+
+//==================== AUTH ====================
+function updateAuthUI(user) {
+  const signInBtn = el('btnSignIn');
+  const userInfo  = el('userInfo');
+  const userEmail = el('userEmail');
+  const sidebar   = el('sidebar');
+  if (!signInBtn) return;
+  if (user) {
+    signInBtn.classList.add('hidden');
+    userInfo.classList.remove('hidden');
+    userEmail.textContent = user.email;
+    sidebar.classList.remove('hidden');
+    syncSidebarOpenBtn();
+  } else {
+    signInBtn.classList.remove('hidden');
+    userInfo.classList.add('hidden');
+    sidebar.classList.add('hidden');
+    el('btnSidebarOpen').classList.add('hidden');
+    setSyncStatus('offline', '로컬 모드');
+  }
+}
+
+function syncSidebarOpenBtn() {
+  // collapsed 상태일 때만 햄버거 오픈 버튼 노출
+  const openBtn = el('btnSidebarOpen');
+  const collapsed = document.body.classList.contains('sidebar-collapsed');
+  const loggedIn = !!currentUser;
+  openBtn.classList.toggle('hidden', !(loggedIn && collapsed));
+}
+
+function toggleSidebar() {
+  document.body.classList.toggle('sidebar-collapsed');
+  try { localStorage.setItem('cqa_sidebar_collapsed', document.body.classList.contains('sidebar-collapsed') ? '1' : '0'); } catch(e) {}
+  syncSidebarOpenBtn();
+}
+
+async function handleSignIn() {
+  if (!firebaseReady) {
+    alert('Firebase가 설정되지 않았습니다. firebase-config.js를 확인하세요.');
+    return;
+  }
+  try {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({ hd: window.CQA_ALLOWED_EMAIL_DOMAIN, prompt: 'select_account' });
+    const result = await fbAuth.signInWithPopup(provider);
+    if (!result.user.email || !result.user.email.endsWith('@' + window.CQA_ALLOWED_EMAIL_DOMAIN)) {
+      await fbAuth.signOut();
+      alert(`@${window.CQA_ALLOWED_EMAIL_DOMAIN} 계정만 사용할 수 있습니다.`);
+    }
+  } catch (e) {
+    console.error('Sign in failed:', e);
+    if (e.code !== 'auth/popup-closed-by-user') alert('로그인 실패: ' + e.message);
+  }
+}
+
+async function handleSignOut() {
+  try {
+    if (pendingDirty) await flushCloudSave();
+    await fbAuth.signOut();
+  } catch (e) { console.error('Sign out failed:', e); }
+}
+
+async function onUserAuthenticated(user) {
+  currentUser = user;
+  updateAuthUI(user);
+  setSyncStatus('pending', '모델 목록 불러오는 중…');
+
+  const [projects, legacies] = await Promise.all([
+    fetchUserProjects(),
+    fetchLegacyEvaluations(),
+  ]);
+  userProjects = [...projects, ...legacies];
+  renderProjectPicker();
+
+  // 목록 로드 실패 시 (sync status가 error) 더 진행하지 않음
+  if (el('syncStatus').classList.contains('sync-error')) return;
+
+  if (userProjects.length === 0) {
+    const hasLocal = !!localStorage.getItem(LS_KEY)
+      && (state.rois.length > 0 || state.validations.length > 0 || Object.keys(state.usability).length > 0);
+    let projectName = null, seedFromLocal = false;
+    if (hasLocal) {
+      const yes = confirm('로컬에 저장된 평가 데이터를 클라우드 새 모델로 업로드할까요?\n(취소 시 빈 모델로 시작)');
+      if (yes) {
+        projectName = prompt('모델명:', state.projectName || 'My Model') || state.projectName;
+        seedFromLocal = !!projectName;
+      }
+    }
+    if (!projectName) projectName = prompt('첫 모델명을 입력하세요:', 'My Model');
+    if (!projectName) { setSyncStatus('offline', '모델 미선택'); return; }
+    const projectId = await createCloudProject(projectName, seedFromLocal);
+    userProjects = await fetchUserProjects();
+    renderProjectPicker();
+    await loadProjectFromCloud(projectId);
+  } else {
+    const lastId = localStorage.getItem(LAST_PROJECT_LS_KEY(user.uid));
+    const targetId = userProjects.find(p => p.id === lastId)?.id || userProjects[0].id;
+    await loadProjectFromCloud(targetId);
+  }
+}
+
+function onUserSignedOut() {
+  currentUser = null; currentProjectId = null; currentReviewerId = null;
+  currentReadOnly = false; userProjects = [];
+  modelReviewersCache.clear(); expandedModels.clear();
+  updateAuthUI(null);
+  updateReadOnlyBanner();
+  const cached = loadState();
+  if (cached) Object.assign(state, cached);
+  renderAll();
+}
+
+function initFirebase() {
+  const cfg = window.CQA_FIREBASE_CONFIG;
+  if (!cfg || cfg.apiKey === 'REPLACE_ME') {
+    setSyncStatus('offline', '로컬 모드 (Firebase 미설정)');
+    el('btnSignIn').classList.remove('hidden');
+    return;
+  }
+  try {
+    firebaseApp = firebase.initializeApp(cfg);
+    fbAuth = firebase.auth();
+    fbDb = firebase.firestore();
+    // Offline persistence (compat API)
+    fbDb.enablePersistence({ synchronizeTabs: true }).catch((e) => {
+      if (e.code === 'failed-precondition') console.warn('Persistence: 다중 탭 모두 활성화 불가');
+      else if (e.code === 'unimplemented') console.warn('Persistence: 브라우저 미지원');
+    });
+    firebaseReady = true;
+    setSyncStatus('pending', '인증 확인 중…');
+    fbAuth.onAuthStateChanged(async (user) => {
+      if (user) {
+        if (!user.email || !user.email.endsWith('@' + window.CQA_ALLOWED_EMAIL_DOMAIN)) {
+          await fbAuth.signOut();
+          alert(`@${window.CQA_ALLOWED_EMAIL_DOMAIN} 계정만 사용할 수 있습니다.`);
+          return;
+        }
+        await onUserAuthenticated(user);
+      } else {
+        onUserSignedOut();
+      }
+    });
+  } catch (e) {
+    console.error('Firebase 초기화 실패:', e);
+    setSyncStatus('error', '⚠ Firebase 초기화 실패');
+    el('btnSignIn').classList.remove('hidden');
   }
 }
 
@@ -115,7 +674,7 @@ function renderROIChips() {
   state.rois.forEach((name, i) => {
     const chip = document.createElement('span'); chip.className = 'chip';
     const input = document.createElement('input'); input.value = name;
-    input.style.width = Math.max(60, name.length * 8 + 10) + 'px';
+    input.style.width = Math.min(180, Math.max(60, name.length * 8 + 10)) + 'px';
     input.onchange = () => { state.rois[i] = input.value; saveState(); renderAll(); };
     const sel = document.createElement('select');
     CUTOFF_TYPES.forEach(t => {
@@ -134,7 +693,7 @@ function renderChipList(containerId, arr, onRename, onRemove) {
   arr.forEach((name, i) => {
     const chip = document.createElement('span'); chip.className = 'chip';
     const input = document.createElement('input'); input.value = name;
-    input.style.width = Math.max(60, name.length * 8 + 10) + 'px';
+    input.style.width = Math.min(180, Math.max(60, name.length * 8 + 10)) + 'px';
     input.onchange = () => { onRename(i, input.value); saveState(); renderAll(); };
     const btn = document.createElement('button'); btn.innerHTML = '×'; btn.title = '삭제';
     btn.onclick = () => { onRemove(i); saveState(); renderAll(); };
@@ -191,6 +750,12 @@ function setupAddForms() {
   };
   el('projectName').oninput = (e) => { state.projectName = e.target.value; saveState(); };
   el('notionLink').oninput = (e) => { state.notionLink = e.target.value; saveState(); };
+}
+
+// 카드 접기/펼치기 (cutoff, ROI/Val/Test) — inline onclick="toggleCard(this)"에서 호출
+function toggleCard(headerEl) {
+  const card = headerEl.closest('.card.collapsible');
+  if (card) card.classList.toggle('collapsed');
 }
 
 function toggleSection(btn) {
@@ -924,8 +1489,16 @@ function init() {
   el('btnLoad').onclick = () => el('fileInput').click();
   el('fileInput').onchange = (e) => { if (e.target.files[0]) importJSON(e.target.files[0]); };
   el('btnClear').onclick = () => {
-    if (!confirm('모든 입력을 초기화할까요? (localStorage 포함)')) return;
-    localStorage.removeItem(LS_KEY); state = defaultState(); saveState(); renderAll();
+    const scope = currentUser && currentProjectId
+      ? '현재 모델의 내 평가 데이터를 초기화할까요? (다른 평가자의 데이터와 모델 설정은 유지됩니다)'
+      : '모든 입력을 초기화할까요? (localStorage 포함)';
+    if (!confirm(scope)) return;
+    if (currentUser && currentProjectId) {
+      REVIEW_KEYS.forEach(k => { state[k] = {}; });
+      saveState(); renderAll();
+    } else {
+      localStorage.removeItem(LS_KEY); state = defaultState(); saveState(); renderAll();
+    }
   };
   el('btnCopyAll').onclick = async () => {
     const md = generateMdAll();
@@ -937,6 +1510,43 @@ function init() {
     if (!ok) alert('클립보드 복사에 실패했습니다. 브라우저 권한을 확인하세요.');
   };
   el('btnExportPdf').onclick = exportPDF;
+
+  // 사이드바 토글
+  el('btnSidebarToggle').onclick = toggleSidebar;
+  el('btnSidebarOpen').onclick = toggleSidebar;
+  try {
+    if (localStorage.getItem('cqa_sidebar_collapsed') === '1') {
+      document.body.classList.add('sidebar-collapsed');
+    }
+  } catch(e) {}
+
+  // 클라우드 / 인증 wiring
+  el('btnSignIn').onclick = handleSignIn;
+  el('btnSignOut').onclick = handleSignOut;
+  el('btnNewProject').onclick = async () => {
+    if (!currentUser) return;
+    const name = prompt('새 모델명을 입력하세요:', 'New Model');
+    if (!name) return;
+    if (pendingDirty) await flushCloudSave();
+    const projectId = await createCloudProject(name, false);
+    const [projects, legacies] = await Promise.all([fetchUserProjects(), fetchLegacyEvaluations()]);
+    userProjects = [...projects, ...legacies];
+    renderProjectPicker();
+    await loadProjectFromCloud(projectId);
+  };
+  el('btnJoinProject').onclick = async () => {
+    if (!currentUser) return;
+    const projectId = prompt('참여할 모델 ID를 입력하세요:');
+    if (!projectId) return;
+    if (pendingDirty) await flushCloudSave();
+    await joinCloudProject(projectId.trim());
+  };
+
+  window.addEventListener('beforeunload', () => {
+    if (pendingDirty) { try { flushCloudSave(); } catch(e) {} }
+  });
+
+  initFirebase();
 }
 
 window.addEventListener('DOMContentLoaded', init);

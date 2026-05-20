@@ -14,3 +14,10 @@ node_modules/
 *.xlsx
 *.csv
 backup_*.json
+
+# Claude Code (사용자별 / 임시)
+.claude/settings.local.json
+.claude/worktrees/
+
+# Firebase 로컬 캐시
+.firebase/
