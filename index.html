@@ -74,6 +74,24 @@
         <input id="notionLink" class="plain w-full" placeholder="노션을 참고해주세요 등" />
       </label>
     </div>
+    <div class="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-4 text-sm">
+      <span class="font-medium">평가 유형:</span>
+      <label class="inline-flex items-center gap-1 cursor-pointer">
+        <input type="radio" name="indicationCategory" value="OAR" /> OAR
+      </label>
+      <label class="inline-flex items-center gap-1 cursor-pointer">
+        <input type="radio" name="indicationCategory" value="GTV" /> GTV
+      </label>
+      <label id="gtvSubtypeWrap" class="hidden items-center gap-1 ml-2">
+        <span class="text-slate-500">— Subtype:</span>
+        <select id="gtvSubtype" class="plain text-sm">
+          <option value="GBM">GBM</option>
+          <option value="Cervix" disabled>Cervix (Phase 3)</option>
+          <option value="LiverMets" disabled>Liver mets (Phase 2)</option>
+        </select>
+      </label>
+      <span class="text-xs text-slate-400">— 평가 유형에 따라 Completeness/Specifications 항목이 달라집니다</span>
+    </div>
   </div>
 
   <div class="card mb-4 collapsible collapsed">
@@ -148,6 +166,18 @@
     </div>
   </div>
 
+  <!-- Patient Metadata 카드 (GTV mode 전용) -->
+  <div id="patientMetaCard" class="card mb-4 collapsible collapsed hidden">
+    <div class="card-hd" onclick="toggleCard(this)">
+      <h3 class="font-semibold text-sm">🩺 <span id="patientMetaTitle">Patient Metadata</span></h3>
+      <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
+    </div>
+    <div class="card-bd">
+      <p id="patientMetaHint" class="text-xs text-slate-500 mb-2">각 환자의 임상 메타데이터를 입력하세요 (stratified analysis용).</p>
+      <div id="patientMetaGrid" class="grid-wrap"></div>
+    </div>
+  </div>
+
   <div class="section-wrap mb-3" id="section-completeness" data-section="completeness">
     <div class="section-hd">
       <label><input type="checkbox" class="pdf-chk" checked /><span>📊 1. ROI Completeness</span></label>
@@ -157,7 +187,7 @@
       </div>
     </div>
     <div class="section-bd">
-      <p class="text-sm text-slate-600 mb-2">각 환자에서 ROI가 <b>누락됐으면 체크</b>하세요. (체크 = 누락, 빈칸 = 존재). xlsx에는 존재 셀이 <code>-</code>로, 누락 셀이 빈칸으로 저장됩니다.</p>
+      <p id="completenessHint" class="text-sm text-slate-600 mb-2">각 환자에서 ROI가 <b>누락됐으면 체크</b>하세요. (체크 = 누락, 빈칸 = 존재). xlsx에는 존재 셀이 <code>-</code>로, 누락 셀이 빈칸으로 저장됩니다.</p>
       <div id="completenessGrid" class="grid-wrap"></div>
     </div>
   </div>
@@ -172,6 +202,7 @@
     </div>
     <div class="section-bd">
       <p class="text-sm text-slate-600 mb-2">1~5 점수를 <b>키보드로 바로 입력</b>하세요. Completeness에서 누락 체크된 셀은 자동 ❌ 고정됩니다. Tab/Enter로 다음 셀, Shift+Tab으로 이전 셀 이동.</p>
+      <p id="usabilityAnchor" class="text-xs text-slate-500 mb-2 italic"></p>
       <div id="usabilityGrid" class="grid-wrap"></div>
     </div>
   </div>

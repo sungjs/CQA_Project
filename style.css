@@ -344,6 +344,23 @@ body.sidebar-collapsed #sidebar { transform: translateX(-100%); }
 }
 .self-tag { color: #6366f1; font-weight: 600; font-size: 10px; }
 .placeholder { color: #cbd5e1; font-style: italic; }
+
+/* GTV subtype wrapper - flex when not hidden */
+#gtvSubtypeWrap.hidden { display: none !important; }
+#gtvSubtypeWrap { display: inline-flex; }
+
+/* GTV completeness 4-state 색상 */
+.g > .c.comp-tp { background: #dcfce7; }      /* green-100 */
+.g > .c.comp-fn { background: #fee2e2; }      /* red-100, critical */
+.g > .c.comp-fp { background: #fef3c7; }      /* amber-100, hallucination */
+.g > .c.comp-tn { background: #f1f5f9; }      /* slate-100 */
+.g > .c .comp-sel {
+  border: 0; background: transparent;
+  width: 100%; padding: 2px 4px;
+  font: inherit; font-weight: 600; text-align: center;
+  cursor: pointer;
+}
+.g > .c .comp-sel:focus { outline: 2px solid #6366f1; outline-offset: -2px; }
 .project-list li .project-meta .shared-tag {
   color: #2563eb; font-weight: 600;
 }

@@ -2,9 +2,35 @@
 const LS_KEY = 'cqa_input_tool_v2';
 const LAST_PROJECT_LS_KEY = (uid) => `cqa_last_project_${uid}`;
 const SCHEMA_VERSION = 1;
-const CRITERIA = ['3. Anatomical accuracy', '4. Over-segmentation', '5. Under-segmentation', '6. Smoothness'];
+const CRITERIA_OAR = ['3. Anatomical accuracy', '4. Over-segmentation', '5. Under-segmentation', '6. Smoothness'];
+const CRITERIA_GBM = ['3. Target coverage', '4. Non-target exclusion', '5. Boundary accuracy', '6. Smoothness / technical'];
+// 호환성: 일부 외부 참조용. 신규 코드는 getCriteria() 사용
+const CRITERIA = CRITERIA_OAR;
 const CUTOFF_TYPES = ['A', 'B', 'C'];
-const REVIEW_KEYS = ['completeness', 'completenessComment', 'usability', 'usabilityComment', 'variant', 'variantComment', 'specs', 'specsComment'];
+const REVIEW_KEYS = ['completeness', 'completenessComment', 'usability', 'usabilityComment', 'variant', 'variantComment', 'specs', 'specsComment', 'patientMeta', 'testMeta'];
+const GTV_COMPLETENESS_STATES = ['TP', 'FN', 'FP', 'TN'];
+
+function getCriteria() {
+  if (state.indicationCategory === 'GTV' && state.gtvSubtype === 'GBM') return CRITERIA_GBM;
+  return CRITERIA_OAR;
+}
+
+function isGtvMode() { return state.indicationCategory === 'GTV'; }
+
+// completeness 셀이 usability 점수 불가 상태인지 판단
+function isUnscoreable(vi, ri) {
+  const v = getCell(state.completeness, vi, ri);
+  if (isGtvMode()) return v === 'FN' || v === 'TN'; // AI 추론 없음 → 점수 불가
+  return v === true; // OAR: missing
+}
+
+// indication별 1-5 scale anchor (tooltip)
+function getUsabilityAnchor() {
+  if (isGtvMode() && state.gtvSubtype === 'GBM') {
+    return '5: Approve as-is · 4: Minor edit(<5%) · 3: Boundary 조정 · 2: Major edit(≥5% or clinically significant) · 1: Scratch부터 재contour';
+  }
+  return '5: Approve · 4: Minor · 3: Moderate · 2: Major · 1: Unusable';
+}
 
 // Firebase 핸들 (init에서 채워짐, 미설정 시 null 유지)
 let firebaseApp = null, fbAuth = null, fbDb = null, firebaseReady = false;
@@ -26,6 +52,9 @@ function defaultState() {
   return {
     projectName: 'CQA_Result',
     notionLink: '',
+    // Indication framework (Phase 1+)
+    indicationCategory: 'OAR',   // 'OAR' | 'GTV'
+    gtvSubtype: null,            // null | 'GBM' | 'Cervix' | 'LiverMets'
     cutoffDefs: {
       A: { avg: 4.0, rScore: 3, ratio: 10 },
       B: { avg: 3.5, rScore: 2, ratio: 20 },
@@ -35,14 +64,16 @@ function defaultState() {
     roiCutoffs: ['A', 'A'],
     validations: ['Validation_1', 'Validation_2', 'Validation_3'],
     tests: ['Test_1', 'Test_2'],
-    completeness: {},            // [vi][ri] = true (missing)
-    completenessComment: {},     // [vi] = comment
+    completeness: {},            // OAR: [vi][ri] = true (missing); GTV: [vi][ri] = 'TP'|'FN'|'FP'|'TN'
+    completenessComment: {},
     usability: {},               // [vi][ri] = '1'..'5'
     usabilityComment: {},
     variant: {},                 // [ti][ri] = '1'..'5' or '❌'
     variantComment: {},
     specs: {},                   // [ri][ci] = true
-    specsComment: {}
+    specsComment: {},
+    patientMeta: {},             // [vi] = { preOp, newlyDiagnosed, ... } (GBM/Cervix/LiverMets별)
+    testMeta: {}                 // [ti] = { ... }
   };
 }
 
@@ -93,6 +124,8 @@ function projectConfigFromState() {
   return {
     name: state.projectName || 'Untitled',
     notionLink: state.notionLink || '',
+    indicationCategory: state.indicationCategory || 'OAR',
+    gtvSubtype: state.gtvSubtype || null,
     cutoffDefs: state.cutoffDefs,
     rois: state.rois, roiCutoffs: state.roiCutoffs,
     validations: state.validations, tests: state.tests,
@@ -154,13 +187,15 @@ function applyProjectConfigToState(projectData) {
   const def = defaultState();
   suppressSave = true;
   try {
-    state.projectName = projectData.name || def.projectName;
-    state.notionLink  = projectData.notionLink || '';
-    state.cutoffDefs  = projectData.cutoffDefs || def.cutoffDefs;
-    state.rois        = projectData.rois || [];
-    state.roiCutoffs  = projectData.roiCutoffs || state.rois.map(() => 'A');
-    state.validations = projectData.validations || [];
-    state.tests       = projectData.tests || [];
+    state.projectName       = projectData.name || def.projectName;
+    state.notionLink        = projectData.notionLink || '';
+    state.indicationCategory = projectData.indicationCategory || 'OAR';
+    state.gtvSubtype        = projectData.gtvSubtype || null;
+    state.cutoffDefs        = projectData.cutoffDefs || def.cutoffDefs;
+    state.rois              = projectData.rois || [];
+    state.roiCutoffs        = projectData.roiCutoffs || state.rois.map(() => 'A');
+    state.validations       = projectData.validations || [];
+    state.tests             = projectData.tests || [];
   } finally { suppressSave = false; }
 }
 function applyReviewToState(reviewData) {
@@ -325,13 +360,15 @@ function applyLegacyEvaluationToState(data) {
   const def = defaultState();
   suppressSave = true;
   try {
-    state.projectName = data.projectName || data.name || def.projectName;
-    state.notionLink  = data.notionLink || '';
-    state.cutoffDefs  = data.cutoffDefs || def.cutoffDefs;
-    state.rois        = data.rois || [];
-    state.roiCutoffs  = data.roiCutoffs || state.rois.map(() => 'A');
-    state.validations = data.validations || [];
-    state.tests       = data.tests || [];
+    state.projectName       = data.projectName || data.name || def.projectName;
+    state.notionLink        = data.notionLink || '';
+    state.indicationCategory = data.indicationCategory || 'OAR'; // legacy는 OAR로 가정
+    state.gtvSubtype        = data.gtvSubtype || null;
+    state.cutoffDefs        = data.cutoffDefs || def.cutoffDefs;
+    state.rois              = data.rois || [];
+    state.roiCutoffs        = data.roiCutoffs || state.rois.map(() => 'A');
+    state.validations       = data.validations || [];
+    state.tests             = data.tests || [];
     REVIEW_KEYS.forEach(k => { state[k] = data[k] || {}; });
   } finally { suppressSave = false; }
 }
@@ -633,6 +670,15 @@ function renderLists() {
   el('valCount').textContent = state.validations.length;
   el('testCount').textContent = state.tests.length;
 
+  // Indication selector 동기화
+  document.querySelectorAll('input[name="indicationCategory"]').forEach(r => {
+    r.checked = r.value === (state.indicationCategory || 'OAR');
+  });
+  const gtvWrap = el('gtvSubtypeWrap');
+  if (gtvWrap) gtvWrap.classList.toggle('hidden', state.indicationCategory !== 'GTV');
+  const gtvSel = el('gtvSubtype');
+  if (gtvSel) gtvSel.value = state.gtvSubtype || 'GBM';
+
   renderROIChips();
   renderChipList('valList', state.validations, (i, newVal) => { state.validations[i] = newVal; }, (i) => { removeAtIndex('validations', i); });
   renderChipList('testList', state.tests, (i, newVal) => { state.tests[i] = newVal; }, (i) => { removeAtIndex('tests', i); });
@@ -710,8 +756,10 @@ function removeAtIndex(listKey, idx) {
   } else if (listKey === 'validations') {
     shiftPrimaryKey(state.completeness, idx); shiftPrimaryKey(state.usability, idx);
     shiftPrimaryKey(state.completenessComment, idx); shiftPrimaryKey(state.usabilityComment, idx);
+    if (state.patientMeta) shiftPrimaryKey(state.patientMeta, idx);
   } else if (listKey === 'tests') {
     shiftPrimaryKey(state.variant, idx); shiftPrimaryKey(state.variantComment, idx);
+    if (state.testMeta) shiftPrimaryKey(state.testMeta, idx);
   }
 }
 function shiftPrimaryKey(obj, removedIdx) {
@@ -750,6 +798,17 @@ function setupAddForms() {
   };
   el('projectName').oninput = (e) => { state.projectName = e.target.value; saveState(); };
   el('notionLink').oninput = (e) => { state.notionLink = e.target.value; saveState(); };
+  document.querySelectorAll('input[name="indicationCategory"]').forEach(r => {
+    r.addEventListener('change', (e) => {
+      state.indicationCategory = e.target.value;
+      if (state.indicationCategory === 'GTV' && !state.gtvSubtype) state.gtvSubtype = 'GBM';
+      saveState();
+      renderAll();
+    });
+  });
+  el('gtvSubtype').addEventListener('change', (e) => {
+    state.gtvSubtype = e.target.value; saveState(); renderAll();
+  });
 }
 
 // 카드 접기/펼치기 (cutoff, ROI/Val/Test) — inline onclick="toggleCard(this)"에서 호출
@@ -778,6 +837,14 @@ function renderCompletenessGrid() {
   const c = el('completenessGrid');
   const V = state.validations.length, R = state.rois.length;
   if (V === 0 || R === 0) return c.innerHTML = '<p class="p-4 text-slate-400 text-sm">Validation과 ROI를 먼저 추가하세요.</p>';
+  const gtv = isGtvMode();
+
+  // 상단 안내문
+  const hint = el('completenessHint');
+  if (hint) hint.textContent = gtv
+    ? '각 환자의 ROI에 대해 TP/FN/FP/TN을 선택하세요. (TP=정답 검출, FN=놓침-critical, FP=환각, TN=정답 미검출)'
+    : '각 환자에서 ROI가 누락됐으면 체크하세요. (체크=누락, 빈칸=존재)';
+
   let html = openGrid(R, 1);
   html += `<div class="c h rh">PatientID</div>`;
   state.rois.forEach(roi => html += `<div class="c h">${esc(roi)}</div>`);
@@ -785,26 +852,68 @@ function renderCompletenessGrid() {
   state.validations.forEach((v, vi) => {
     html += `<div class="c rh">${esc(v)}</div>`;
     state.rois.forEach((roi, ri) => {
-      const missing = getCell(state.completeness, vi, ri);
-      html += `<div class="c"><input type="checkbox" data-vi="${vi}" data-ri="${ri}" class="comp-chk" ${missing ? 'checked' : ''} /></div>`;
+      const val = getCell(state.completeness, vi, ri);
+      if (gtv) {
+        const opts = ['', ...GTV_COMPLETENESS_STATES].map(s => {
+          const label = s || '·';
+          return `<option value="${s}" ${val === s ? 'selected' : ''}>${label}</option>`;
+        }).join('');
+        const cls = val === 'FN' ? 'comp-fn' : val === 'FP' ? 'comp-fp' : val === 'TP' ? 'comp-tp' : val === 'TN' ? 'comp-tn' : '';
+        html += `<div class="c ${cls}"><select data-vi="${vi}" data-ri="${ri}" class="comp-sel">${opts}</select></div>`;
+      } else {
+        html += `<div class="c"><input type="checkbox" data-vi="${vi}" data-ri="${ri}" class="comp-chk" ${val ? 'checked' : ''} /></div>`;
+      }
     });
     html += `<div class="c cm"><input type="text" data-vi="${vi}" class="comp-comment" value="${esc(state.completenessComment[vi] || '')}" /></div>`;
   });
-  html += `<div class="c rh stat">Count (missing)</div>`;
-  state.rois.forEach((_, ri) => {
-    let miss = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri)) miss++;
-    html += `<div class="c stat">${miss}</div>`;
-  });
-  html += `<div class="c stat cm"></div><div class="c rh stat">Completeness</div>`;
-  state.rois.forEach((_, ri) => {
-    let miss = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri)) miss++;
-    html += `<div class="c stat">${(V > 0 ? (V - miss) / V : 0 * 100).toFixed(0)}%</div>`;
-  });
-  html += `<div class="c stat cm"></div></div>`;
+
+  if (gtv) {
+    // GTV: TP/FN/FP/TN count rows
+    GTV_COMPLETENESS_STATES.forEach(st => {
+      html += `<div class="c rh stat">${st}</div>`;
+      state.rois.forEach((_, ri) => {
+        let n = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri) === st) n++;
+        html += `<div class="c stat ${st === 'FN' ? 'fail' : st === 'TP' ? 'pass' : ''}">${n}</div>`;
+      });
+      html += `<div class="c stat cm"></div>`;
+    });
+    // Missed lesion rate (FN / (TP+FN))
+    html += `<div class="c rh stat">Miss rate (FN)</div>`;
+    state.rois.forEach((_, ri) => {
+      let tp = 0, fn = 0;
+      for (let vi = 0; vi < V; vi++) {
+        const s = getCell(state.completeness, vi, ri);
+        if (s === 'TP') tp++; else if (s === 'FN') fn++;
+      }
+      const denom = tp + fn;
+      html += `<div class="c stat">${denom ? ((fn/denom)*100).toFixed(0)+'%' : '-'}</div>`;
+    });
+    html += `<div class="c stat cm"></div>`;
+  } else {
+    html += `<div class="c rh stat">Count (missing)</div>`;
+    state.rois.forEach((_, ri) => {
+      let miss = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri)) miss++;
+      html += `<div class="c stat">${miss}</div>`;
+    });
+    html += `<div class="c stat cm"></div><div class="c rh stat">Completeness</div>`;
+    state.rois.forEach((_, ri) => {
+      let miss = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri)) miss++;
+      html += `<div class="c stat">${(V > 0 ? ((V - miss) / V) * 100 : 0).toFixed(0)}%</div>`;
+    });
+    html += `<div class="c stat cm"></div>`;
+  }
+  html += `</div>`;
   c.innerHTML = html;
+
   c.querySelectorAll('.comp-chk').forEach(chk => {
     chk.onchange = (e) => {
       setCell(state.completeness, +e.target.dataset.vi, +e.target.dataset.ri, e.target.checked);
+      saveState(); renderCompletenessGrid(); renderUsabilityGrid(); renderSummaryView(); renderSpecsGrid();
+    };
+  });
+  c.querySelectorAll('.comp-sel').forEach(sel => {
+    sel.onchange = (e) => {
+      setCell(state.completeness, +e.target.dataset.vi, +e.target.dataset.ri, e.target.value);
       saveState(); renderCompletenessGrid(); renderUsabilityGrid(); renderSummaryView(); renderSpecsGrid();
     };
   });
@@ -829,7 +938,7 @@ function renderUsabilityGrid() {
   state.validations.forEach((v, vi) => {
     html += `<div class="c rh">${esc(v)}</div>`;
     state.rois.forEach((roi, ri) => {
-      if (getCell(state.completeness, vi, ri)) html += `<div class="c missing">❌</div>`;
+      if (isUnscoreable(vi, ri)) html += `<div class="c missing">❌</div>`;
       else {
         const sv = getCell(state.usability, vi, ri) || '';
         const sc = sv ? (+sv <= 2 ? ' score-low' : +sv === 3 ? ' score-mid' : '') : '';
@@ -900,7 +1009,7 @@ function computeUsabilityStats() {
   return state.rois.map((_, ri) => {
     const scores = [];
     for (let vi = 0; vi < V; vi++) {
-      if (getCell(state.completeness, vi, ri)) continue;
+      if (isUnscoreable(vi, ri)) continue;
       const s = getCell(state.usability, vi, ri);
       if (s && !isNaN(+s)) scores.push(+s);
     }
@@ -914,9 +1023,29 @@ function computeUsabilityStats() {
 
 function computeCompletenessStats() {
   const V = state.validations.length;
+  const gtv = isGtvMode();
   return state.rois.map((_, ri) => {
-    let miss = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri)) miss++;
-    return { miss, total: V, completeness: V > 0 ? (V - miss) / V : 0 };
+    let miss = 0, tp = 0, fn = 0, fp = 0, tn = 0;
+    for (let vi = 0; vi < V; vi++) {
+      const v = getCell(state.completeness, vi, ri);
+      if (gtv) {
+        if (v === 'TP') tp++;
+        else if (v === 'FN') { fn++; miss++; }
+        else if (v === 'FP') fp++;
+        else if (v === 'TN') tn++;
+      } else {
+        if (v) miss++;
+      }
+    }
+    // completeness 정의: GTV는 (TP)/(TP+FN), OAR은 (V-miss)/V
+    let completeness;
+    if (gtv) {
+      const denom = tp + fn;
+      completeness = denom ? tp / denom : 0;
+    } else {
+      completeness = V > 0 ? (V - miss) / V : 0;
+    }
+    return { miss, total: V, completeness, tp, fn, fp, tn };
   });
 }
 
@@ -962,6 +1091,7 @@ function renderVariantGrid() {
 function renderSpecsGrid() {
   const c = el('specsGrid'), R = state.rois.length;
   if (R === 0) return c.innerHTML = '<p class="p-4 text-slate-400 text-sm">ROI를 먼저 추가하세요.</p>';
+  const CRITERIA = getCriteria();
   const us = computeUsabilityStats(), cp = computeCompletenessStats();
   const specCols = '160px 80px 80px 100px 100px ' + Array(CRITERIA.length).fill('110px').join(' ') + ' 220px 240px';
   let html = `<div class="g" style="grid-template-columns:${specCols}">`;
@@ -999,7 +1129,68 @@ function renderSummaryView() {
   c.innerHTML = html;
 }
 
-function renderAll() { renderLists(); renderCompletenessGrid(); renderUsabilityGrid(); renderVariantGrid(); renderSpecsGrid(); renderSummaryView(); }
+function renderAll() {
+  renderLists();
+  renderPatientMetaCard();
+  renderCompletenessGrid();
+  renderUsabilityGrid();
+  renderVariantGrid();
+  renderSpecsGrid();
+  renderSummaryView();
+  // tooltip 갱신
+  const anchor = el('usabilityAnchor');
+  if (anchor) anchor.textContent = '1-5 anchor — ' + getUsabilityAnchor();
+}
+
+// GBM patient metadata fields
+const GBM_META_FIELDS = [
+  { key: 'preOp',           label: 'Post-op (cavity 있음)', type: 'checkbox' },
+  { key: 'newlyDiagnosed',  label: 'Newly diagnosed',       type: 'checkbox' },
+  { key: 'recurrence',      label: 'Recurrence',            type: 'checkbox' },
+];
+
+function renderPatientMetaCard() {
+  const card = el('patientMetaCard');
+  if (!card) return;
+  const showFor = isGtvMode() && state.gtvSubtype === 'GBM';
+  card.classList.toggle('hidden', !showFor);
+  if (!showFor) return;
+
+  const title = el('patientMetaTitle');
+  if (title) title.textContent = 'Patient Metadata — GBM';
+
+  const grid = el('patientMetaGrid');
+  const V = state.validations.length;
+  if (V === 0) { grid.innerHTML = '<p class="p-4 text-slate-400 text-sm">Validation 환자를 먼저 추가하세요.</p>'; return; }
+
+  const fields = GBM_META_FIELDS;
+  // grid-template-columns: rowhead + fields × N + comment(optional)
+  const cols = `${ROWHEAD_W}px ` + fields.map(() => '160px').join(' ');
+  let html = `<div class="g" style="grid-template-columns:${cols}">`;
+  html += `<div class="c h rh">PatientID</div>`;
+  fields.forEach(f => html += `<div class="c h">${esc(f.label)}</div>`);
+  state.validations.forEach((v, vi) => {
+    html += `<div class="c rh">${esc(v)}</div>`;
+    const meta = state.patientMeta[vi] || {};
+    fields.forEach(f => {
+      const checked = !!meta[f.key];
+      html += `<div class="c"><input type="checkbox" class="pmeta-chk" data-vi="${vi}" data-key="${f.key}" ${checked ? 'checked' : ''} /></div>`;
+    });
+  });
+  html += `</div>`;
+  grid.innerHTML = html;
+
+  grid.querySelectorAll('.pmeta-chk').forEach(chk => {
+    chk.onchange = (e) => {
+      const vi = +e.target.dataset.vi, key = e.target.dataset.key;
+      if (!state.patientMeta[vi]) state.patientMeta[vi] = {};
+      if (e.target.checked) state.patientMeta[vi][key] = true;
+      else delete state.patientMeta[vi][key];
+      if (Object.keys(state.patientMeta[vi]).length === 0) delete state.patientMeta[vi];
+      saveState();
+    };
+  });
+}
 
 //==================== XLSX GENERATION (with Styles) ====================
 function buildWorkbook() {
@@ -1141,22 +1332,45 @@ function buildWorkbook() {
     ws['!cols'] = cols; XLSX.utils.book_append_sheet(wb, ws, name);
   }
 
-  // Sheet 1, 2, 3
-  makeDataSheet('1. ROI Completeness', state.validations, state.completeness, state.completenessComment, 
-    (ws, ref, vi, ri) => { if (!getCell(state.completeness, vi, ri)) setC(ws, ref, '-'); },
+  const gtvX = isGtvMode();
+  // Sheet 1: Completeness — OAR (blank/-) vs GTV (TP/FN/FP/TN)
+  makeDataSheet('1. ROI Completeness', state.validations, state.completeness, state.completenessComment,
+    (ws, ref, vi, ri) => {
+      const v = getCell(state.completeness, vi, ri);
+      if (gtvX) { if (v) setC(ws, ref, v); }
+      else      { if (!v) setC(ws, ref, '-'); }
+    },
     (ws, sr) => {
-      setC(ws, `A${sr}`, 'Count (missing)', { rowHeader: true }); setC(ws, `A${sr+1}`, 'Completeness', { rowHeader: true });
-      state.rois.forEach((_, ri) => {
-        const c = colLetter(ri+2);
-        setC(ws, `${c}${sr}`, '__formula__', { formula: `COUNTBLANK(${c}2:${c}${V+1})`, type: 'n', rowHeader: true });
-        setC(ws, `${c}${sr+1}`, '__formula__', { formula: `(1-COUNTBLANK(${c}2:${c}${V+1})/ROWS(${c}2:${c}${V+1}))`, type: 'n', rowHeader: true });
-      });
+      if (gtvX) {
+        // GTV: TP/FN/FP/TN count rows + miss rate
+        GTV_COMPLETENESS_STATES.forEach((st, i) => {
+          setC(ws, `A${sr+i}`, st, { rowHeader: true });
+          state.rois.forEach((_, ri) => {
+            const c = colLetter(ri+2);
+            setC(ws, `${c}${sr+i}`, '__formula__', { formula: `COUNTIF(${c}2:${c}${V+1},"${st}")`, type: 'n', rowHeader: true });
+          });
+        });
+        // Miss rate = FN/(TP+FN)
+        const mr = sr + GTV_COMPLETENESS_STATES.length;
+        setC(ws, `A${mr}`, 'Miss rate (FN/(TP+FN))', { rowHeader: true });
+        state.rois.forEach((_, ri) => {
+          const c = colLetter(ri+2);
+          setC(ws, `${c}${mr}`, '__formula__', { formula: `IFERROR(COUNTIF(${c}2:${c}${V+1},"FN")/(COUNTIF(${c}2:${c}${V+1},"TP")+COUNTIF(${c}2:${c}${V+1},"FN")),"")`, type: 'n', rowHeader: true });
+        });
+      } else {
+        setC(ws, `A${sr}`, 'Count (missing)', { rowHeader: true }); setC(ws, `A${sr+1}`, 'Completeness', { rowHeader: true });
+        state.rois.forEach((_, ri) => {
+          const c = colLetter(ri+2);
+          setC(ws, `${c}${sr}`, '__formula__', { formula: `COUNTBLANK(${c}2:${c}${V+1})`, type: 'n', rowHeader: true });
+          setC(ws, `${c}${sr+1}`, '__formula__', { formula: `(1-COUNTBLANK(${c}2:${c}${V+1})/ROWS(${c}2:${c}${V+1}))`, type: 'n', rowHeader: true });
+        });
+      }
     }
   );
 
   makeDataSheet('2. Clinical Usability', state.validations, state.usability, state.usabilityComment,
     (ws, ref, vi, ri) => {
-      if (getCell(state.completeness, vi, ri)) setC(ws, ref, '❌');
+      if (isUnscoreable(vi, ri)) setC(ws, ref, '❌');
       else { const s = getCell(state.usability, vi, ri); if (s && !isNaN(+s)) setC(ws, ref, +s); }
     },
     (ws, sr) => {
@@ -1187,6 +1401,7 @@ function buildWorkbook() {
   // ---------- Sheet: 3-6. Specifications ----------
   {
     const ws = {};
+    const CRITERIA = getCriteria();
     const hd = ['ROI', 'Cutoff type', 'Completeness', 'PASS/FAIL', 'Avg (rounded)', ...CRITERIA, 'Comment', 'Improvement required'];
     hd.forEach((n, i) => setC(ws, `${colLetter(i+1)}1`, n, { header: true }));
 
@@ -1206,6 +1421,24 @@ function buildWorkbook() {
     updateRange(ws, 7 + CRITERIA.length, R + 1);
     const cols = [{wch:18},{wch:10},{wch:14},{wch:10},{wch:12}, ...CRITERIA.map(()=>({wch:18})), {wch:24}, {wch:30}];
     ws['!cols'] = cols; XLSX.utils.book_append_sheet(wb, ws, '3-6. Specifications');
+  }
+
+  // ---------- Sheet: Patient Metadata (GBM 전용) ----------
+  if (gtvX && state.gtvSubtype === 'GBM' && V > 0) {
+    const ws = {};
+    setC(ws, 'A1', 'Patient', { header: true });
+    GBM_META_FIELDS.forEach((f, i) => setC(ws, `${colLetter(i+2)}1`, f.label, { header: true }));
+    state.validations.forEach((v, vi) => {
+      const r = vi + 2;
+      setC(ws, `A${r}`, v, { rowHeader: true });
+      const meta = state.patientMeta[vi] || {};
+      GBM_META_FIELDS.forEach((f, i) => {
+        if (meta[f.key]) setC(ws, `${colLetter(i+2)}${r}`, '✓');
+      });
+    });
+    updateRange(ws, 1 + GBM_META_FIELDS.length, V + 1);
+    ws['!cols'] = [{wch:24}, ...GBM_META_FIELDS.map(()=>({wch:22}))];
+    XLSX.utils.book_append_sheet(wb, ws, 'Patient Metadata');
   }
 
   return wb;
@@ -1262,18 +1495,42 @@ function toMdTable(headers, rows) {
 function generateMdCompleteness() {
   const V = state.validations.length, R = state.rois.length;
   if (!V || !R) return '';
+  const gtv = isGtvMode();
   const headers = ['PatientID', ...state.rois, 'Comment'];
   const rows = state.validations.map((v, vi) => [
     v,
-    ...state.rois.map((_, ri) => getCell(state.completeness, vi, ri) ? '' : '-'),
+    ...state.rois.map((_, ri) => {
+      const c = getCell(state.completeness, vi, ri);
+      if (gtv) return c || '';
+      return c ? '' : '-';
+    }),
     state.completenessComment[vi] || ''
   ]);
-  const missCounts = state.rois.map((_, ri) => {
-    let miss = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri)) miss++;
-    return miss;
-  });
-  rows.push(['**Count (missing)**', ...missCounts.map(String), '']);
-  rows.push(['**Completeness**', ...missCounts.map(m => ((V - m) / V * 100).toFixed(0) + '%'), '']);
+  if (gtv) {
+    GTV_COMPLETENESS_STATES.forEach(st => {
+      const counts = state.rois.map((_, ri) => {
+        let n = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri) === st) n++;
+        return String(n);
+      });
+      rows.push([`**${st}**`, ...counts, '']);
+    });
+    const missRates = state.rois.map((_, ri) => {
+      let tp = 0, fn = 0;
+      for (let vi = 0; vi < V; vi++) {
+        const s = getCell(state.completeness, vi, ri);
+        if (s === 'TP') tp++; else if (s === 'FN') fn++;
+      }
+      return (tp+fn) ? (fn/(tp+fn)*100).toFixed(0)+'%' : '-';
+    });
+    rows.push(['**Miss rate**', ...missRates, '']);
+  } else {
+    const missCounts = state.rois.map((_, ri) => {
+      let miss = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri)) miss++;
+      return miss;
+    });
+    rows.push(['**Count (missing)**', ...missCounts.map(String), '']);
+    rows.push(['**Completeness**', ...missCounts.map(m => ((V - m) / V * 100).toFixed(0) + '%'), '']);
+  }
   return toMdTable(headers, rows);
 }
 
@@ -1283,7 +1540,7 @@ function generateMdUsability() {
   const headers = ['PatientID', ...state.rois, 'Comment'];
   const rows = state.validations.map((v, vi) => [
     v,
-    ...state.rois.map((_, ri) => getCell(state.completeness, vi, ri) ? '❌' : (getCell(state.usability, vi, ri) || '')),
+    ...state.rois.map((_, ri) => isUnscoreable(vi, ri) ? '❌' : (getCell(state.usability, vi, ri) || '')),
     state.usabilityComment[vi] || ''
   ]);
   const stats = computeUsabilityStats();
@@ -1315,6 +1572,7 @@ function generateMdVariant() {
 function generateMdSpecs() {
   const R = state.rois.length;
   if (!R) return '';
+  const CRITERIA = getCriteria();
   const us = computeUsabilityStats(), cp = computeCompletenessStats();
   const headers = ['ROI', 'Cutoff', 'Comp.', 'PASS/FAIL', 'Avg', ...CRITERIA, 'Comment', 'Improvement required'];
   const rows = state.rois.map((roi, ri) => {
@@ -1451,6 +1709,7 @@ function exportPDF() {
   }
 
   if (selected.includes('specs') && R) {
+    const CRITERIA = getCriteria();
     const us = computeUsabilityStats(), cp = computeCompletenessStats();
     const headers = ['ROI', 'Cutoff', 'Comp.', 'PASS/FAIL', 'Avg', ...CRITERIA, 'Comment', 'Improvement required'];
     const rows = state.rois.map((roi, ri) => {
@@ -1461,6 +1720,7 @@ function exportPDF() {
   }
 
   if (selected.includes('summary')) {
+    const CRITERIA = getCriteria();
     const us = computeUsabilityStats(), cp = computeCompletenessStats();
     const headers = ['ROI', 'Cutoff', 'PASS/FAIL', 'Avg', 'Ratio(≤2)', 'Ratio(≤3)', 'Completeness', 'Improvement'];
     const rows = state.rois.map((roi, ri) => {
