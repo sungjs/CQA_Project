@@ -9,7 +9,7 @@ const CRITERIA_CERVIX = ['3. Primary tumor coverage', '4. Parametrial / vaginal 
 // 호환성: 일부 외부 참조용. 신규 코드는 getCriteria() 사용
 const CRITERIA = CRITERIA_OAR;
 const CUTOFF_TYPES = ['A', 'B', 'C'];
-const REVIEW_KEYS = ['completeness', 'completenessComment', 'usability', 'usabilityComment', 'variant', 'variantComment', 'specs', 'specsComment', 'patientMeta', 'testMeta'];
+const REVIEW_KEYS = ['completeness', 'completenessComment', 'usability', 'usabilityComment', 'variant', 'variantComment', 'specs', 'specsComment', 'patientMeta', 'testMeta', 'truthAbsent', 'predPresent'];
 const GTV_COMPLETENESS_STATES = ['TP', 'FN', 'FP', 'TN'];
 
 function getCriteria() {
@@ -24,11 +24,43 @@ function getCriteria() {
 
 function isGtvMode() { return state.indicationCategory === 'GTV'; }
 
+// GTV 4-state 파생: truthAbsent + predPresent → 'TP'|'FN'|'FP'|'TN'
+function getCompState4(vi, ri) {
+  const truthAbsent = !!getCell(state.truthAbsent, vi, ri);
+  const predPresent = !!getCell(state.predPresent, vi, ri);
+  if (truthAbsent) return predPresent ? 'FP' : 'TN';
+  return predPresent ? 'TP' : 'FN';
+}
+
 // completeness 셀이 usability 점수 불가 상태인지 판단
 function isUnscoreable(vi, ri) {
-  const v = getCell(state.completeness, vi, ri);
-  if (isGtvMode()) return v === 'FN' || v === 'TN'; // AI 추론 없음 → 점수 불가
-  return v === true; // OAR: missing
+  if (isGtvMode()) {
+    const s = getCompState4(vi, ri);
+    return s === 'FN' || s === 'TN'; // AI 추론 없음 → 점수 불가
+  }
+  return getCell(state.completeness, vi, ri) === true; // OAR: missing
+}
+
+// Phase 1 → Phase 2C 자동 마이그레이션: completeness[vi][ri] = 'TP'/'FN'/'FP'/'TN' → truthAbsent + predPresent
+function migrateGtvCompletenessV2() {
+  if (!isGtvMode()) return;
+  const oldComp = state.completeness || {};
+  let migrated = 0;
+  Object.keys(oldComp).forEach(vi => {
+    const vc = oldComp[vi]; if (!vc) return;
+    Object.keys(vc).forEach(ri => {
+      const v = vc[ri];
+      if (typeof v !== 'string' || !['TP','FN','FP','TN'].includes(v)) return;
+      if (v === 'TP') setCell(state.predPresent, +vi, +ri, true);
+      else if (v === 'FP') { setCell(state.truthAbsent, +vi, +ri, true); setCell(state.predPresent, +vi, +ri, true); }
+      else if (v === 'TN') setCell(state.truthAbsent, +vi, +ri, true);
+      // 'FN' = default 상태, 아무것도 저장하지 않음
+      delete vc[ri];
+      migrated++;
+    });
+    if (Object.keys(vc).length === 0) delete oldComp[vi];
+  });
+  if (migrated > 0) console.log(`[migrate] GTV completeness V1 → V2: ${migrated} cells`);
 }
 
 // indication별 1-5 scale anchor (tooltip)
@@ -114,7 +146,10 @@ function defaultState() {
     specs: {},                   // [ri][ci] = true
     specsComment: {},
     patientMeta: {},             // [vi] = { preOp, newlyDiagnosed, ... } (GBM/Cervix/LiverMets별)
-    testMeta: {}                 // [ti] = { ... }
+    testMeta: {},                // [ti] = { ... }
+    // GTV mode 전용: 실제/추론 분리 입력
+    truthAbsent: {},             // [vi][ri] = true → 실제 "없음" (기본 absent = 실제 "있음")
+    predPresent: {}              // [vi][ri] = true → 추론 "있음" (기본 absent = 추론 "없음")
   };
 }
 
@@ -136,6 +171,28 @@ function loadState() {
     if (!parsed.roiCutoffs) parsed.roiCutoffs = parsed.rois.map(() => 'A');
     while (parsed.roiCutoffs.length < parsed.rois.length) parsed.roiCutoffs.push('A');
     parsed.roiCutoffs = parsed.roiCutoffs.slice(0, parsed.rois.length);
+    // GTV V1 → V2 마이그레이션 (TP/FN/FP/TN 문자열 → truthAbsent/predPresent)
+    if (parsed.indicationCategory === 'GTV') {
+      const oldComp = parsed.completeness || {};
+      Object.keys(oldComp).forEach(vi => {
+        const vc = oldComp[vi]; if (!vc) return;
+        Object.keys(vc).forEach(ri => {
+          const v = vc[ri];
+          if (typeof v !== 'string' || !['TP','FN','FP','TN'].includes(v)) return;
+          if (v === 'TP') { if (!parsed.predPresent[vi]) parsed.predPresent[vi] = {}; parsed.predPresent[vi][ri] = true; }
+          else if (v === 'FP') {
+            if (!parsed.truthAbsent[vi]) parsed.truthAbsent[vi] = {};
+            if (!parsed.predPresent[vi]) parsed.predPresent[vi] = {};
+            parsed.truthAbsent[vi][ri] = true; parsed.predPresent[vi][ri] = true;
+          } else if (v === 'TN') {
+            if (!parsed.truthAbsent[vi]) parsed.truthAbsent[vi] = {};
+            parsed.truthAbsent[vi][ri] = true;
+          }
+          delete vc[ri];
+        });
+        if (Object.keys(vc).length === 0) delete oldComp[vi];
+      });
+    }
     return parsed;
   } catch(e) { return null; }
 }
@@ -243,6 +300,7 @@ function applyReviewToState(reviewData) {
   suppressSave = true;
   try {
     REVIEW_KEYS.forEach(k => { state[k] = (reviewData && reviewData[k]) || {}; });
+    migrateGtvCompletenessV2();
   } finally { suppressSave = false; }
 }
 
@@ -490,6 +548,17 @@ function renderProjectPicker() {
       }
     };
     row.appendChild(nameWrap);
+
+    // 삭제 버튼: owner만 (legacy 제외)
+    if (!p._legacy && p.owner === currentUser?.uid) {
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'row-delete';
+      delBtn.title = '모델 삭제';
+      delBtn.textContent = '🗑';
+      delBtn.onclick = (e) => { e.stopPropagation(); handleDeleteModel(p.id); };
+      row.appendChild(delBtn);
+    }
     li.appendChild(row);
 
     // 펼친 상태이고 legacy가 아니면 평가자 리스트
@@ -521,6 +590,16 @@ function renderProjectPicker() {
               loadReviewerEvaluation(p.id, r.uid);
             }
           };
+          // 자기 평가만 삭제 가능 (placeholder는 아직 만들지도 않은 상태라 삭제 불필요)
+          if (isSelf && !r._placeholder) {
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'row-delete';
+            delBtn.title = '내 평가 데이터 삭제';
+            delBtn.textContent = '🗑';
+            delBtn.onclick = (e) => { e.stopPropagation(); handleDeleteMyReview(p.id); };
+            rLi.appendChild(delBtn);
+          }
           ul.appendChild(rLi);
         });
       }
@@ -529,6 +608,82 @@ function renderProjectPicker() {
 
     list.appendChild(li);
   });
+}
+
+// 모델 전체 삭제 (owner만 가능). reviews 서브컬렉션도 같이 정리
+async function deleteCloudProject(modelId) {
+  if (!firebaseReady || !currentUser) return false;
+  try {
+    const projectRef = fbDb.collection('projects').doc(modelId);
+    const reviewsSnap = await projectRef.collection('reviews').get();
+    const batch = fbDb.batch();
+    reviewsSnap.forEach(d => batch.delete(d.ref));
+    batch.delete(projectRef);
+    await batch.commit();
+    modelReviewersCache.delete(modelId);
+    expandedModels.delete(modelId);
+    return true;
+  } catch (e) {
+    console.error('Delete project failed:', e);
+    alert('모델 삭제 실패: ' + (e.code || e.message));
+    return false;
+  }
+}
+
+// 자기 평가 데이터만 삭제 (모델 자체는 유지)
+async function deleteMyReview(modelId) {
+  if (!firebaseReady || !currentUser) return false;
+  try {
+    await fbDb.collection('projects').doc(modelId).collection('reviews').doc(currentUser.uid).delete();
+    modelReviewersCache.delete(modelId);
+    return true;
+  } catch (e) {
+    console.error('Delete review failed:', e);
+    alert('내 평가 삭제 실패: ' + (e.code || e.message));
+    return false;
+  }
+}
+
+// 모델 삭제 후 처리 — 사이드바 갱신, 다른 모델로 전환
+async function handleDeleteModel(modelId) {
+  const entry = userProjects.find(p => p.id === modelId);
+  if (!entry) return;
+  const name = entry.name || modelId;
+  if (!confirm(`정말 모델 "${name}"을(를) 삭제할까요?\n이 모델의 모든 평가자 데이터까지 함께 사라집니다. (되돌릴 수 없음)`)) return;
+  if (pendingDirty) await flushCloudSave();
+  setSyncStatus('pending', '삭제 중…');
+  const ok = await deleteCloudProject(modelId);
+  if (!ok) return;
+  const [projects, legacies] = await Promise.all([fetchUserProjects(), fetchLegacyEvaluations()]);
+  userProjects = [...projects, ...legacies];
+  renderProjectPicker();
+  if (modelId === currentProjectId) {
+    // 현재 보던 모델 삭제됨 → 다른 모델 로드 or 빈 상태
+    currentProjectId = null; currentReviewerId = null; currentReadOnly = false;
+    if (userProjects.length > 0) {
+      await loadProjectFromCloud(userProjects[0].id);
+    } else {
+      Object.assign(state, defaultState());
+      renderAll();
+      setSyncStatus('saved', '모델 없음');
+    }
+  } else {
+    setSyncStatus('saved', '☁ 저장됨');
+  }
+}
+
+async function handleDeleteMyReview(modelId) {
+  if (!confirm(`이 모델에 대한 내 평가 데이터를 삭제할까요?\n(모델 자체와 다른 평가자의 데이터는 유지됩니다)`)) return;
+  if (pendingDirty) await flushCloudSave();
+  setSyncStatus('pending', '삭제 중…');
+  const ok = await deleteMyReview(modelId);
+  if (!ok) return;
+  // 현재 본 모델이면 다시 로드 (빈 review로 복귀)
+  if (modelId === currentProjectId) {
+    await loadProjectFromCloud(modelId);
+  } else {
+    setSyncStatus('saved', '☁ 저장됨');
+  }
 }
 
 async function joinCloudProject(projectId) {
@@ -795,10 +950,14 @@ function removeAtIndex(listKey, idx) {
     state.roiCutoffs.splice(idx, 1);
     shiftSecondaryKey(state.completeness, idx); shiftSecondaryKey(state.usability, idx);
     shiftSecondaryKey(state.variant, idx); shiftPrimaryKey(state.specs, idx);
+    if (state.truthAbsent)  shiftSecondaryKey(state.truthAbsent, idx);
+    if (state.predPresent)  shiftSecondaryKey(state.predPresent, idx);
   } else if (listKey === 'validations') {
     shiftPrimaryKey(state.completeness, idx); shiftPrimaryKey(state.usability, idx);
     shiftPrimaryKey(state.completenessComment, idx); shiftPrimaryKey(state.usabilityComment, idx);
-    if (state.patientMeta) shiftPrimaryKey(state.patientMeta, idx);
+    if (state.patientMeta)  shiftPrimaryKey(state.patientMeta, idx);
+    if (state.truthAbsent)  shiftPrimaryKey(state.truthAbsent, idx);
+    if (state.predPresent)  shiftPrimaryKey(state.predPresent, idx);
   } else if (listKey === 'tests') {
     shiftPrimaryKey(state.variant, idx); shiftPrimaryKey(state.variantComment, idx);
     if (state.testMeta) shiftPrimaryKey(state.testMeta, idx);
@@ -881,57 +1040,72 @@ function renderCompletenessGrid() {
   if (V === 0 || R === 0) return c.innerHTML = '<p class="p-4 text-slate-400 text-sm">Validation과 ROI를 먼저 추가하세요.</p>';
   const gtv = isGtvMode();
 
-  // 상단 안내문
   const hint = el('completenessHint');
   if (hint) hint.textContent = gtv
-    ? '각 환자의 ROI에 대해 TP/FN/FP/TN을 선택하세요. (TP=정답 검출, FN=놓침-critical, FP=환각, TN=정답 미검출)'
-    : '각 환자에서 ROI가 누락됐으면 체크하세요. (체크=누락, 빈칸=존재)';
+    ? '각 환자×ROI에 "실제(있음=✓)"와 "추론(있음=✓)"을 체크하세요. 실제는 기본 ✓(있음), 추론은 기본 □(없음). 셀 배경색으로 TP/FN/FP/TN이 자동 표시됩니다.'
+    : '각 환자에서 ROI가 누락됐으면 체크하세요. (체크=누락, 빈칸=존재). xlsx에는 존재 셀이 - 로, 누락 셀이 빈칸으로 저장됩니다.';
 
-  let html = openGrid(R, 1);
-  html += `<div class="c h rh">PatientID</div>`;
-  state.rois.forEach(roi => html += `<div class="c h">${esc(roi)}</div>`);
-  html += `<div class="c h cm">Comment</div>`;
-  state.validations.forEach((v, vi) => {
-    html += `<div class="c rh">${esc(v)}</div>`;
-    state.rois.forEach((roi, ri) => {
-      const val = getCell(state.completeness, vi, ri);
-      if (gtv) {
-        const opts = ['', ...GTV_COMPLETENESS_STATES].map(s => {
-          const label = s || '·';
-          return `<option value="${s}" ${val === s ? 'selected' : ''}>${label}</option>`;
-        }).join('');
-        const cls = val === 'FN' ? 'comp-fn' : val === 'FP' ? 'comp-fp' : val === 'TP' ? 'comp-tp' : val === 'TN' ? 'comp-tn' : '';
-        html += `<div class="c ${cls}"><select data-vi="${vi}" data-ri="${ri}" class="comp-sel">${opts}</select></div>`;
-      } else {
-        html += `<div class="c"><input type="checkbox" data-vi="${vi}" data-ri="${ri}" class="comp-chk" ${val ? 'checked' : ''} /></div>`;
-      }
-    });
-    html += `<div class="c cm"><input type="text" data-vi="${vi}" class="comp-comment" value="${esc(state.completenessComment[vi] || '')}" /></div>`;
-  });
-
+  let html;
   if (gtv) {
-    // GTV: TP/FN/FP/TN count rows
+    // 2 columns per ROI: 실제 / 추론
+    const colCount = 2 * R;
+    html = openGrid(colCount, 1);
+    html += `<div class="c h rh">PatientID</div>`;
+    state.rois.forEach(roi => {
+      html += `<div class="c h" title="${esc(roi)} 실제 (Truth)"><span class="c-roi">${esc(roi)}</span><span class="c-sub">실제</span></div>`;
+      html += `<div class="c h" title="${esc(roi)} 추론 (Pred)"><span class="c-roi">${esc(roi)}</span><span class="c-sub">추론</span></div>`;
+    });
+    html += `<div class="c h cm">Comment</div>`;
+
+    state.validations.forEach((v, vi) => {
+      html += `<div class="c rh">${esc(v)}</div>`;
+      state.rois.forEach((roi, ri) => {
+        const truthY = !getCell(state.truthAbsent, vi, ri); // 기본 있음
+        const predY  = !!getCell(state.predPresent, vi, ri); // 기본 없음
+        const st = getCompState4(vi, ri);
+        const cls = st === 'TP' ? 'comp-tp' : st === 'FN' ? 'comp-fn' : st === 'FP' ? 'comp-fp' : 'comp-tn';
+        html += `<div class="c ${cls}" title="${st}"><input type="checkbox" data-vi="${vi}" data-ri="${ri}" data-field="truth" class="comp-tp-chk" ${truthY ? 'checked' : ''} /></div>`;
+        html += `<div class="c ${cls}" title="${st}"><input type="checkbox" data-vi="${vi}" data-ri="${ri}" data-field="pred"  class="comp-tp-chk" ${predY ? 'checked' : ''} /></div>`;
+      });
+      html += `<div class="c cm"><input type="text" data-vi="${vi}" class="comp-comment" value="${esc(state.completenessComment[vi] || '')}" /></div>`;
+    });
+
+    // Stats: TP/FN/FP/TN, 각 ROI는 2 컬럼 span
     GTV_COMPLETENESS_STATES.forEach(st => {
       html += `<div class="c rh stat">${st}</div>`;
       state.rois.forEach((_, ri) => {
-        let n = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri) === st) n++;
-        html += `<div class="c stat ${st === 'FN' ? 'fail' : st === 'TP' ? 'pass' : ''}">${n}</div>`;
+        let n = 0; for (let vi = 0; vi < V; vi++) if (getCompState4(vi, ri) === st) n++;
+        const cls = st === 'FN' ? 'fail' : st === 'TP' ? 'pass' : '';
+        html += `<div class="c stat ${cls}" style="grid-column: span 2;">${n}</div>`;
       });
       html += `<div class="c stat cm"></div>`;
     });
-    // Missed lesion rate (FN / (TP+FN))
-    html += `<div class="c rh stat">Miss rate (FN)</div>`;
+    // Miss rate
+    html += `<div class="c rh stat">Miss rate</div>`;
     state.rois.forEach((_, ri) => {
       let tp = 0, fn = 0;
       for (let vi = 0; vi < V; vi++) {
-        const s = getCell(state.completeness, vi, ri);
+        const s = getCompState4(vi, ri);
         if (s === 'TP') tp++; else if (s === 'FN') fn++;
       }
       const denom = tp + fn;
-      html += `<div class="c stat">${denom ? ((fn/denom)*100).toFixed(0)+'%' : '-'}</div>`;
+      html += `<div class="c stat" style="grid-column: span 2;">${denom ? ((fn/denom)*100).toFixed(0)+'%' : '-'}</div>`;
     });
-    html += `<div class="c stat cm"></div>`;
+    html += `<div class="c stat cm"></div></div>`;
   } else {
+    // OAR mode (기존)
+    html = openGrid(R, 1);
+    html += `<div class="c h rh">PatientID</div>`;
+    state.rois.forEach(roi => html += `<div class="c h">${esc(roi)}</div>`);
+    html += `<div class="c h cm">Comment</div>`;
+    state.validations.forEach((v, vi) => {
+      html += `<div class="c rh">${esc(v)}</div>`;
+      state.rois.forEach((roi, ri) => {
+        const val = getCell(state.completeness, vi, ri);
+        html += `<div class="c"><input type="checkbox" data-vi="${vi}" data-ri="${ri}" class="comp-chk" ${val ? 'checked' : ''} /></div>`;
+      });
+      html += `<div class="c cm"><input type="text" data-vi="${vi}" class="comp-comment" value="${esc(state.completenessComment[vi] || '')}" /></div>`;
+    });
     html += `<div class="c rh stat">Count (missing)</div>`;
     state.rois.forEach((_, ri) => {
       let miss = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri)) miss++;
@@ -942,20 +1116,28 @@ function renderCompletenessGrid() {
       let miss = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri)) miss++;
       html += `<div class="c stat">${(V > 0 ? ((V - miss) / V) * 100 : 0).toFixed(0)}%</div>`;
     });
-    html += `<div class="c stat cm"></div>`;
+    html += `<div class="c stat cm"></div></div>`;
   }
-  html += `</div>`;
   c.innerHTML = html;
 
+  // OAR 체크박스
   c.querySelectorAll('.comp-chk').forEach(chk => {
     chk.onchange = (e) => {
       setCell(state.completeness, +e.target.dataset.vi, +e.target.dataset.ri, e.target.checked);
       saveState(); renderCompletenessGrid(); renderUsabilityGrid(); renderSummaryView(); renderSpecsGrid();
     };
   });
-  c.querySelectorAll('.comp-sel').forEach(sel => {
-    sel.onchange = (e) => {
-      setCell(state.completeness, +e.target.dataset.vi, +e.target.dataset.ri, e.target.value);
+  // GTV 실제/추론 체크박스
+  c.querySelectorAll('.comp-tp-chk').forEach(chk => {
+    chk.onchange = (e) => {
+      const vi = +e.target.dataset.vi, ri = +e.target.dataset.ri, fld = e.target.dataset.field;
+      if (fld === 'truth') {
+        // 체크된 상태 = 실제 있음 = truthAbsent OFF
+        setCell(state.truthAbsent, vi, ri, !e.target.checked);
+      } else {
+        // 체크된 상태 = 추론 있음 = predPresent ON
+        setCell(state.predPresent, vi, ri, e.target.checked);
+      }
       saveState(); renderCompletenessGrid(); renderUsabilityGrid(); renderSummaryView(); renderSpecsGrid();
     };
   });
@@ -1069,17 +1251,16 @@ function computeCompletenessStats() {
   return state.rois.map((_, ri) => {
     let miss = 0, tp = 0, fn = 0, fp = 0, tn = 0;
     for (let vi = 0; vi < V; vi++) {
-      const v = getCell(state.completeness, vi, ri);
       if (gtv) {
-        if (v === 'TP') tp++;
-        else if (v === 'FN') { fn++; miss++; }
-        else if (v === 'FP') fp++;
-        else if (v === 'TN') tn++;
+        const s = getCompState4(vi, ri);
+        if (s === 'TP') tp++;
+        else if (s === 'FN') { fn++; miss++; }
+        else if (s === 'FP') fp++;
+        else if (s === 'TN') tn++;
       } else {
-        if (v) miss++;
+        if (getCell(state.completeness, vi, ri)) miss++;
       }
     }
-    // completeness 정의: GTV는 (TP)/(TP+FN), OAR은 (V-miss)/V
     let completeness;
     if (gtv) {
       const denom = tp + fn;
@@ -1405,12 +1586,11 @@ function buildWorkbook() {
   }
 
   const gtvX = isGtvMode();
-  // Sheet 1: Completeness — OAR (blank/-) vs GTV (TP/FN/FP/TN)
+  // Sheet 1: Completeness — OAR (blank/-) vs GTV (derived TP/FN/FP/TN)
   makeDataSheet('1. ROI Completeness', state.validations, state.completeness, state.completenessComment,
     (ws, ref, vi, ri) => {
-      const v = getCell(state.completeness, vi, ri);
-      if (gtvX) { if (v) setC(ws, ref, v); }
-      else      { if (!v) setC(ws, ref, '-'); }
+      if (gtvX) setC(ws, ref, getCompState4(vi, ri));
+      else { if (!getCell(state.completeness, vi, ri)) setC(ws, ref, '-'); }
     },
     (ws, sr) => {
       if (gtvX) {
@@ -1579,8 +1759,8 @@ function generateMdCompleteness() {
   const rows = state.validations.map((v, vi) => [
     v,
     ...state.rois.map((_, ri) => {
+      if (gtv) return getCompState4(vi, ri);
       const c = getCell(state.completeness, vi, ri);
-      if (gtv) return c || '';
       return c ? '' : '-';
     }),
     state.completenessComment[vi] || ''
@@ -1588,7 +1768,7 @@ function generateMdCompleteness() {
   if (gtv) {
     GTV_COMPLETENESS_STATES.forEach(st => {
       const counts = state.rois.map((_, ri) => {
-        let n = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri) === st) n++;
+        let n = 0; for (let vi = 0; vi < V; vi++) if (getCompState4(vi, ri) === st) n++;
         return String(n);
       });
       rows.push([`**${st}**`, ...counts, '']);
@@ -1596,7 +1776,7 @@ function generateMdCompleteness() {
     const missRates = state.rois.map((_, ri) => {
       let tp = 0, fn = 0;
       for (let vi = 0; vi < V; vi++) {
-        const s = getCell(state.completeness, vi, ri);
+        const s = getCompState4(vi, ri);
         if (s === 'TP') tp++; else if (s === 'FN') fn++;
       }
       return (tp+fn) ? (fn/(tp+fn)*100).toFixed(0)+'%' : '-';
