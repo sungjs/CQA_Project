@@ -4,7 +4,6 @@
 window.CQA_FIREBASE_CONFIG = {
   apiKey: "AIzaSyC00EAJVQ95B-s4tuGWYNo3PKA_DmSsEmk",
   authDomain: "cqa-input-tool.firebaseapp.com",
-  databaseURL: "https://cqa-input-tool-default-rtdb.firebaseio.com",
   projectId: "cqa-input-tool",
   storageBucket: "cqa-input-tool.firebasestorage.app",
   messagingSenderId: "274418586771",

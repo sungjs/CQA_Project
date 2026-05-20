@@ -415,6 +415,7 @@ function applyLegacyEvaluationToState(data) {
 }
 
 function updateReadOnlyBanner() {
+  document.body.classList.toggle('read-only', !!currentReadOnly);
   const banner = el('readOnlyBanner');
   if (!banner) return;
   banner.classList.toggle('hidden', !currentReadOnly);

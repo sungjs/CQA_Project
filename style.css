@@ -384,6 +384,41 @@ body.sidebar-collapsed #sidebar { transform: translateX(-100%); }
 }
 .read-only-banner.hidden { display: none; }
 
+/* ---- 읽기 전용 모드: 본문 input/grid 전반 비활성 ---- */
+/* 사이드바, 헤더, 모달은 영향 받지 않도록 #appMain 스코프 */
+body.read-only #appMain input,
+body.read-only #appMain select,
+body.read-only #appMain textarea {
+  pointer-events: none;
+  background: #f8fafc !important;
+  color: #64748b !important;
+  cursor: not-allowed;
+}
+body.read-only #appMain .chip button {
+  display: none; /* 칩 삭제 버튼 숨김 */
+}
+body.read-only #appMain form button {
+  pointer-events: none;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* 단, export 버튼들은 활성 유지 */
+body.read-only #btnDownload,
+body.read-only #btnExportPdf,
+body.read-only #btnCopyAll,
+body.read-only #btnSave,
+body.read-only #btnLoad,
+body.read-only #btnClear,
+body.read-only .copy-md-btn,
+body.read-only .section-toggle-btn,
+body.read-only .card-toggle,
+body.read-only .card-hd,
+body.read-only #fileInput {
+  pointer-events: auto !important;
+  opacity: 1 !important;
+  cursor: pointer !important;
+}
+
 /* ---- 접기 가능 카드 ---- */
 .card.collapsible .card-hd {
   display: flex; align-items: center; justify-content: space-between;
