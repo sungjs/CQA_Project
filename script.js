@@ -11,8 +11,18 @@ const CUTOFF_TYPES = ['A', 'B', 'C'];
 const REVIEW_KEYS = ['completeness', 'completenessComment', 'usability', 'usabilityComment', 'variant', 'variantComment', 'specs', 'specsComment', 'patientMeta', 'testMeta', 'truthAbsent', 'predPresent', 'reviewerComment', 'reviewConfidence'];
 const GTV_COMPLETENESS_STATES = ['TP', 'FN', 'FP', 'TN'];
 
-function getCriteria() {
+function getDefaultCriteria() {
   return isGtvMode() ? CRITERIA_GTV : CRITERIA_OAR;
+}
+function getCriteria() {
+  const def = getDefaultCriteria();
+  const custom = state.subMetricLabels;
+  if (!Array.isArray(custom) || custom.length === 0) return def;
+  // 빈 라벨은 default로 fallback
+  return def.map((d, i) => {
+    const c = custom[i];
+    return (typeof c === 'string' && c.trim()) ? c.trim() : d;
+  });
 }
 
 function isGtvMode() { return state.indicationCategory === 'GTV'; }
@@ -128,6 +138,8 @@ function defaultState() {
     specsComment: {},
     patientMeta: {},             // [vi] = { preOp, newlyDiagnosed, ... } (GBM/Cervix/LiverMets별)
     testMeta: {},                // [ti] = { ... }
+    // Sub-metric 라벨 — null이면 default (OAR/GTV별 4개) 사용. owner-defined.
+    subMetricLabels: null,
     // GTV mode 전용: 실제/추론 분리 입력
     truthAbsent: {},             // [vi][ri] = true → 실제 "없음" (기본 absent = 실제 "있음")
     predPresent: {},             // [vi][ri] = true → 추론 "있음" (기본 absent = 추론 "없음")
@@ -188,6 +200,7 @@ function projectConfigFromState() {
     notionLink: state.notionLink || '',
     indicationCategory: state.indicationCategory || 'OAR',
     gtvSubtype: state.gtvSubtype || null,
+    subMetricLabels: Array.isArray(state.subMetricLabels) ? state.subMetricLabels : null,
     cutoffDefs: state.cutoffDefs,
     rois: state.rois, roiCutoffs: state.roiCutoffs,
     validations: state.validations, tests: state.tests,
@@ -256,6 +269,7 @@ function applyProjectConfigToState(projectData) {
     state.notionLink        = projectData.notionLink || '';
     state.indicationCategory = projectData.indicationCategory || 'OAR';
     state.gtvSubtype        = projectData.gtvSubtype || null;
+    state.subMetricLabels   = Array.isArray(projectData.subMetricLabels) ? projectData.subMetricLabels : null;
     state.cutoffDefs        = projectData.cutoffDefs || def.cutoffDefs;
     state.rois              = projectData.rois || [];
     state.roiCutoffs        = projectData.roiCutoffs || state.rois.map(() => 'A');
@@ -435,6 +449,7 @@ function applyLegacyEvaluationToState(data) {
     state.notionLink        = data.notionLink || '';
     state.indicationCategory = data.indicationCategory || 'OAR'; // legacy는 OAR로 가정
     state.gtvSubtype        = data.gtvSubtype || null;
+    state.subMetricLabels   = Array.isArray(data.subMetricLabels) ? data.subMetricLabels : null;
     state.cutoffDefs        = data.cutoffDefs || def.cutoffDefs;
     state.rois              = data.rois || [];
     state.roiCutoffs        = data.roiCutoffs || state.rois.map(() => 'A');
@@ -594,12 +609,29 @@ async function fetchAllReviewersFull(modelId) {
   }
 }
 
+// Generic Fleiss kappa — `counts[i][j]` = i번째 unit에서 j번째 category 받은 rater 수
+// n = 모든 unit에서 동일한 rater 수. categoryCount = j 범위
+function fleissKappa(counts, n, categoryCount) {
+  const N = counts.length;
+  if (N === 0 || n < 2) return null;
+  const p_j = new Array(categoryCount).fill(0);
+  counts.forEach(row => row.forEach((c, j) => p_j[j] += c));
+  for (let j = 0; j < categoryCount; j++) p_j[j] /= (N * n);
+  const P_i = counts.map(row => {
+    const sumSq = row.reduce((s, c) => s + c * c, 0);
+    return (sumSq - n) / (n * (n - 1));
+  });
+  const P_bar = P_i.reduce((s, p) => s + p, 0) / N;
+  const Pe = p_j.reduce((s, p) => s + p * p, 0);
+  if (Pe === 1) return 1;
+  return (P_bar - Pe) / (1 - Pe);
+}
+
 // Fleiss kappa for ROI ri (usability scores 1-5 as nominal categories)
 function fleissKappaForRoi(reviewers, ri, V) {
   const n = reviewers.length;
   if (n < 2 || V === 0) return null;
-  const k = 5; // categories 1..5
-  const counts = []; // counts[case_idx] = [c1,c2,c3,c4,c5]
+  const counts = [];
   let validCases = 0;
   for (let vi = 0; vi < V; vi++) {
     const row = [0, 0, 0, 0, 0];
@@ -610,22 +642,27 @@ function fleissKappaForRoi(reviewers, ri, V) {
     });
     if (raters === n) { counts.push(row); validCases++; }
   }
-  if (validCases === 0) return { kappa: null, validCases: 0, n };
-  const N = validCases;
-  // p_j = column sum / (N * n)
-  const p_j = [0, 0, 0, 0, 0];
-  counts.forEach(row => row.forEach((c, j) => p_j[j] += c));
-  for (let j = 0; j < k; j++) p_j[j] /= (N * n);
-  // P_i for each case
-  const P_i = counts.map(row => {
-    const sumSq = row.reduce((s, c) => s + c * c, 0);
-    return (sumSq - n) / (n * (n - 1));
-  });
-  const P_bar = P_i.reduce((s, p) => s + p, 0) / N;
-  const Pe = p_j.reduce((s, p) => s + p * p, 0);
-  if (Pe === 1) return { kappa: 1, validCases: N, n }; // 모두 같은 카테고리 → 완전 일치
-  const kappa = (P_bar - Pe) / (1 - Pe);
-  return { kappa, validCases: N, n };
+  const k = fleissKappa(counts, n, 5);
+  return { kappa: k, validCases, n };
+}
+
+// Fleiss kappa for sub-metric ci (specs binary across all ROIs)
+function fleissKappaForSubmetric(reviewers, ci, R) {
+  const n = reviewers.length;
+  if (n < 2 || R === 0) return null;
+  // binary: [not-checked, checked]
+  const counts = [];
+  for (let ri = 0; ri < R; ri++) {
+    let c1 = 0, c0 = 0;
+    reviewers.forEach(r => {
+      const v = r.specs?.[ri]?.[ci];
+      if (v === true) c1++;
+      else c0++;
+    });
+    counts.push([c0, c1]);
+  }
+  const k = fleissKappa(counts, n, 2);
+  return { kappa: k, validCount: R, n };
 }
 
 function kappaLabel(k) {
@@ -664,10 +701,17 @@ async function renderInterraterAgreement() {
     return;
   }
 
-  // ROI별 kappa
+  // ROI별 usability kappa
   const roiKappas = state.rois.map((roi, ri) => {
     const result = fleissKappaForRoi(reviewers, ri, V);
     return { roi, ...result };
+  });
+
+  // Sub-metric별 specs kappa
+  const CRITERIA = getCriteria();
+  const subKappas = CRITERIA.map((label, ci) => {
+    const result = fleissKappaForSubmetric(reviewers, ci, R);
+    return { label, ...result };
   });
 
   // 평가자 리스트 (이메일 short)
@@ -677,8 +721,9 @@ async function renderInterraterAgreement() {
     평가자(${n}): <b class="text-slate-700">${esc(reviewerList)}</b>
   </div>`;
 
+  html += `<h4 class="text-xs font-semibold text-slate-500 mb-2" style="letter-spacing:0.06em">USABILITY 점수 일치도 (ROI별)</h4>`;
   html += `<table class="summary-table"><thead><tr>
-    <th>ROI</th><th>κ</th><th>해석</th><th>유효 케이스</th><th>전체 평가자</th>
+    <th>ROI</th><th>κ</th><th>해석</th><th>유효 케이스</th><th>평가자 수</th>
   </tr></thead><tbody>`;
   roiKappas.forEach(r => {
     if (r.kappa === null) {
@@ -686,6 +731,21 @@ async function renderInterraterAgreement() {
     } else {
       const lbl = kappaLabel(r.kappa);
       html += `<tr><td>${esc(r.roi)}</td><td><b>${r.kappa.toFixed(3)}</b></td><td><span class="kappa-badge ${lbl.cls}">${lbl.text}</span></td><td>${r.validCases}/${V}</td><td>${r.n}</td></tr>`;
+    }
+  });
+  html += `</tbody></table>`;
+
+  // Sub-metric별 specs 일치도
+  html += `<h4 class="text-xs font-semibold text-slate-500 mt-5 mb-2" style="letter-spacing:0.06em">3-6 SPECIFICATIONS 체크 일치도 (sub-metric별, ROI 통합)</h4>`;
+  html += `<table class="summary-table"><thead><tr>
+    <th class="text-left pl-3">Sub-metric</th><th>κ</th><th>해석</th><th>ROI 수</th><th>평가자 수</th>
+  </tr></thead><tbody>`;
+  subKappas.forEach(s => {
+    if (s.kappa === null) {
+      html += `<tr><td class="text-left pl-3">${esc(s.label)}</td><td>-</td><td class="text-slate-400">데이터 부족</td><td>${s.validCount}</td><td>${s.n}</td></tr>`;
+    } else {
+      const lbl = kappaLabel(s.kappa);
+      html += `<tr><td class="text-left pl-3">${esc(s.label)}</td><td><b>${s.kappa.toFixed(3)}</b></td><td><span class="kappa-badge ${lbl.cls}">${lbl.text}</span></td><td>${s.validCount}</td><td>${s.n}</td></tr>`;
     }
   });
   html += `</tbody></table>`;
@@ -1183,6 +1243,12 @@ function setupAddForms() {
   el('reviewerComment').addEventListener('input', (e) => {
     state.reviewerComment = e.target.value; saveState();
   });
+  document.querySelectorAll('.sub-metric-input').forEach(inp => {
+    inp.addEventListener('input', (e) => {
+      applySubMetricLabel(+e.target.dataset.idx, e.target.value);
+    });
+  });
+  el('btnResetSubMetric').onclick = resetSubMetricLabels;
 }
 
 // 카드 접기/펼치기 (cutoff, ROI/Val/Test) — inline onclick="toggleCard(this)"에서 호출
@@ -1558,6 +1624,7 @@ function renderSummaryView() {
 
 function renderAll() {
   renderLists();
+  renderSubMetricLabels();
   renderCompletenessGrid();
   renderUsabilityGrid();
   renderVariantGrid();
@@ -1566,6 +1633,44 @@ function renderAll() {
   // tooltip 갱신
   const anchor = el('usabilityAnchor');
   if (anchor) anchor.textContent = '1-5 anchor — ' + getUsabilityAnchor();
+}
+
+// Sub-metric 라벨 카드 동기화
+function renderSubMetricLabels() {
+  const defaults = getDefaultCriteria();
+  const custom = state.subMetricLabels;
+  const isCustom = Array.isArray(custom) && custom.some(c => typeof c === 'string' && c.trim());
+  const status = el('subMetricStatus');
+  if (status) status.textContent = isCustom ? '(사용자 정의)' : '';
+  // owner 외에는 readonly
+  const isOwner = (() => {
+    if (!currentUser || !currentProjectId) return true; // 로컬 모드는 항상 가능
+    const entry = userProjects.find(p => p.id === currentProjectId);
+    if (!entry) return true;
+    return entry.owner === currentUser.uid;
+  })();
+  document.querySelectorAll('.sub-metric-input').forEach((inp, i) => {
+    const val = custom?.[i];
+    inp.value = (typeof val === 'string') ? val : '';
+    inp.placeholder = defaults[i] || '';
+    inp.disabled = !isOwner || currentReadOnly;
+  });
+}
+
+function applySubMetricLabel(idx, value) {
+  const arr = Array.isArray(state.subMetricLabels) ? state.subMetricLabels.slice() : [null, null, null, null];
+  while (arr.length < 4) arr.push(null);
+  arr[idx] = (typeof value === 'string' && value.trim()) ? value.trim() : null;
+  const allEmpty = arr.every(x => !x);
+  state.subMetricLabels = allEmpty ? null : arr;
+  saveState();
+  renderAll();
+}
+function resetSubMetricLabels() {
+  state.subMetricLabels = null;
+  saveState();
+  renderAll();
+  toast('info', '기본 라벨로 초기화했습니다');
 }
 
 //==================== XLSX GENERATION (with Styles) ====================
