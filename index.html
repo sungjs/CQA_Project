@@ -10,6 +10,8 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body class="bg-slate-50 text-slate-800">
@@ -34,30 +36,32 @@
   <div id="readOnlyBanner" class="read-only-banner hidden">
     🔒 <b>읽기 전용 (Legacy 평가)</b> · 변경 내용은 저장되지 않습니다. XLSX/PDF/MD 내보내기는 가능합니다.
   </div>
-  <header class="flex items-center justify-between mb-4 flex-wrap gap-3">
+  <header class="flex items-center justify-between mb-5 flex-wrap gap-3">
     <div>
-      <h1 class="text-2xl font-bold text-slate-900">🧪 CQA Input Tool</h1>
-      <p class="text-sm text-slate-500">ROI/환자 수를 자유롭게 조정하면서 CQA 결과를 입력하고 한 번에 xlsx로 내보냅니다.</p>
+      <h1 class="text-xl font-bold text-slate-900 tracking-tight">🧪 CQA Input Tool</h1>
+      <p class="text-xs text-slate-500 mt-0.5">ROI/환자 수를 자유롭게 조정하면서 CQA 결과를 입력하고 한 번에 xlsx로 내보냅니다.</p>
     </div>
     <div class="flex gap-2 flex-wrap items-center">
-      <!-- 클라우드 동기화 상태 -->
-      <div id="syncStatus" class="text-xs text-slate-500 px-2" title="저장 상태">로컬 모드</div>
+      <!-- 동기화 상태 -->
+      <div id="syncStatus" class="px-1" title="저장 상태">로컬 모드</div>
 
-      <!-- 인증 (로그아웃 상태) -->
+      <!-- 인증 -->
       <button id="btnSignIn" class="btn hidden">🔐 Google 로그인</button>
-      <!-- 인증 (로그인 상태) -->
       <div id="userInfo" class="hidden items-center gap-2 text-sm">
-        <span id="userEmail" class="text-slate-600"></span>
+        <span id="userEmail"></span>
         <button id="btnSignOut" class="btn-link">로그아웃</button>
       </div>
 
-      <span class="text-slate-300">|</span>
+      <!-- Secondary tools (subtle group) -->
+      <div class="btn-group">
+        <button id="btnLoad" class="btn" title="JSON 불러오기">📂</button>
+        <button id="btnSave" class="btn" title="JSON 저장">💾</button>
+        <button id="btnCopyAll" class="btn" title="전체 MD 복사">📋</button>
+        <button id="btnExportPdf" class="btn" title="PDF 내보내기">🖨</button>
+        <button id="btnClear" class="btn" title="초기화">🗑</button>
+      </div>
 
-      <button id="btnLoad" class="btn">📂 JSON 불러오기</button>
-      <button id="btnSave" class="btn">💾 JSON 저장</button>
-      <button id="btnClear" class="btn">🗑 초기화</button>
-      <button id="btnCopyAll" class="btn">📋 전체 MD 복사</button>
-      <button id="btnExportPdf" class="btn">🖨 PDF 내보내기</button>
+      <!-- Primary action -->
       <button id="btnDownload" class="btn btn-primary">⬇ XLSX 다운로드</button>
       <input type="file" id="fileInput" accept=".json" class="hidden" />
     </div>
@@ -66,39 +70,37 @@
   <div class="card mb-4">
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <label class="text-sm">
-        <span class="block font-medium mb-1">모델명 (파일명)</span>
-        <input id="projectName" class="plain w-full" />
+        <span class="block font-medium mb-1.5 text-slate-700">모델명 <span class="text-xs text-slate-400 font-normal">(파일명에 사용)</span></span>
+        <input id="projectName" class="plain w-full" placeholder="예: GBM_v1_2026Q2" />
       </label>
       <label class="text-sm">
-        <span class="block font-medium mb-1">총평 / Notion 링크 (선택)</span>
-        <input id="notionLink" class="plain w-full" placeholder="노션을 참고해주세요 등" />
+        <span class="block font-medium mb-1.5 text-slate-700">총평 / Notion 링크 <span class="text-xs text-slate-400 font-normal">(선택)</span></span>
+        <input id="notionLink" class="plain w-full" placeholder="노션 페이지 URL 또는 자유 메모" />
       </label>
     </div>
-    <div class="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-4 text-sm">
-      <span class="font-medium">평가 유형:</span>
-      <label class="inline-flex items-center gap-1 cursor-pointer">
-        <input type="radio" name="indicationCategory" value="OAR" /> OAR
-      </label>
-      <label class="inline-flex items-center gap-1 cursor-pointer">
-        <input type="radio" name="indicationCategory" value="GTV" /> GTV
-      </label>
-      <label id="gtvSubtypeWrap" class="hidden items-center gap-1 ml-2">
-        <span class="text-slate-500">— Subtype:</span>
+    <div class="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center gap-3 text-sm">
+      <span class="font-medium text-slate-700">평가 유형</span>
+      <div class="segmented">
+        <label><input type="radio" name="indicationCategory" value="OAR" />OAR</label>
+        <label><input type="radio" name="indicationCategory" value="GTV" />GTV</label>
+      </div>
+      <label id="gtvSubtypeWrap" class="hidden items-center gap-2 ml-1">
+        <span class="text-xs text-slate-400">subtype</span>
         <select id="gtvSubtype" class="plain text-sm">
           <option value="GBM">GBM</option>
           <option value="LiverMets">Liver mets</option>
           <option value="Cervix">Cervix</option>
         </select>
       </label>
-      <span class="text-xs text-slate-400">— 평가 유형에 따라 Completeness/Specifications 항목이 달라집니다</span>
+      <span class="text-xs text-slate-400 ml-auto">평가 유형에 따라 Completeness · Specifications 항목이 달라집니다</span>
     </div>
   </div>
 
   <div class="card mb-4 collapsible collapsed">
     <div class="card-hd" onclick="toggleCard(this)">
-      <h3 class="font-semibold text-sm">🎚 Cutoff 기준 정의</h3>
+      <h3>🎚 Cutoff 기준 정의</h3>
       <div class="flex items-center gap-2">
-        <span class="text-xs text-slate-500">각 타입별 임계값을 자유롭게 조정</span>
+        <span class="card-hint">각 타입별 임계값을 자유롭게 조정</span>
         <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
       </div>
     </div>
@@ -121,7 +123,7 @@
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
     <div class="card collapsible collapsed">
       <div class="card-hd" onclick="toggleCard(this)">
-        <h3 class="font-semibold text-sm">🎯 ROI 목록 (<span id="roiCount">0</span>) <span class="text-xs font-normal text-slate-400">— Cutoff</span></h3>
+        <h3>🎯 ROI 목록 (<span id="roiCount">0</span>) <span class="text-xs font-normal text-slate-400">— Cutoff</span></h3>
         <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
       </div>
       <div class="card-bd">
@@ -134,7 +136,7 @@
     </div>
     <div class="card collapsible collapsed">
       <div class="card-hd" onclick="toggleCard(this)">
-        <h3 class="font-semibold text-sm">🧑‍⚕️ Validation 환자 (<span id="valCount">0</span>)</h3>
+        <h3>🧑‍⚕️ Validation 환자 (<span id="valCount">0</span>)</h3>
         <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
       </div>
       <div class="card-bd">
@@ -150,7 +152,7 @@
     </div>
     <div class="card collapsible collapsed">
       <div class="card-hd" onclick="toggleCard(this)">
-        <h3 class="font-semibold text-sm">🧪 Test 환자 (7-8 Variant) (<span id="testCount">0</span>)</h3>
+        <h3>🧪 Test 환자 (7-8 Variant) (<span id="testCount">0</span>)</h3>
         <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
       </div>
       <div class="card-bd">
@@ -169,9 +171,9 @@
   <!-- Reviewer Note 카드 (평가자별 메타데이터, collapsible) -->
   <div id="reviewerNoteCard" class="card mb-4 collapsible collapsed">
     <div class="card-hd" onclick="toggleCard(this)">
-      <h3 class="font-semibold text-sm">📝 평가자 노트</h3>
+      <h3>📝 평가자 노트</h3>
       <div class="flex items-center gap-2">
-        <span class="text-xs text-slate-500">난이도 · 코멘트 · failure mode 메모</span>
+        <span class="card-hint">난이도 · failure mode 메모</span>
         <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
       </div>
     </div>
@@ -199,8 +201,11 @@
   <!-- Patient Metadata 카드 (GTV mode 전용) -->
   <div id="patientMetaCard" class="card mb-4 collapsible collapsed hidden">
     <div class="card-hd" onclick="toggleCard(this)">
-      <h3 class="font-semibold text-sm">🩺 <span id="patientMetaTitle">Patient Metadata</span></h3>
-      <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
+      <h3>🩺 <span id="patientMetaTitle">Patient Metadata</span></h3>
+      <div class="flex items-center gap-2">
+        <span class="card-hint">stratified 분석용</span>
+        <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
+      </div>
     </div>
     <div class="card-bd">
       <p id="patientMetaHint" class="text-xs text-slate-500 mb-2">각 환자의 임상 메타데이터를 입력하세요 (stratified analysis용).</p>
@@ -279,8 +284,12 @@
     </div>
   </div>
 
-  <footer class="text-center text-xs text-slate-400 mt-8 py-4">
-    CQA Input Tool · 로그인 시 Firestore 자동 동기화, 로그아웃 시 브라우저 localStorage 저장.
+  <footer class="app-footer">
+    <span class="footer-brand">CQA Input Tool</span>
+    <span class="footer-dot">·</span>
+    <span>로그인 시 Firestore 자동 동기화</span>
+    <span class="footer-dot">·</span>
+    <span>로그아웃 시 브라우저 localStorage 저장</span>
   </footer>
 </div>
 

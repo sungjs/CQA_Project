@@ -1377,8 +1377,15 @@ function renderSummaryView() {
     let totalFn = 0, totalFp = 0, totalTp = 0, totalTn = 0;
     cp.forEach(s => { totalFn += s.fn; totalFp += s.fp; totalTp += s.tp; totalTn += s.tn; });
     const overallMiss = (totalTp + totalFn) ? (totalFn / (totalTp + totalFn) * 100).toFixed(1) : '-';
-    html += `<div class="mt-3 p-3 bg-amber-50 border border-amber-200 rounded text-sm">
-      <b>GTV 전체 지표</b> · TP: ${totalTp} · <span class="text-red-700">FN(missed): ${totalFn}</span> · <span class="text-amber-700">FP(hallucination): ${totalFp}</span> · TN: ${totalTn} · <b>Miss rate: ${overallMiss}%</b>
+    html += `<div class="gtv-summary-box">
+      <div class="gtv-summary-title">GTV 전체 지표</div>
+      <div class="gtv-summary-stats">
+        <span class="stat-chip stat-tp"><span class="stat-label">TP</span><span class="stat-val">${totalTp}</span></span>
+        <span class="stat-chip stat-fn"><span class="stat-label">FN <small>missed</small></span><span class="stat-val">${totalFn}</span></span>
+        <span class="stat-chip stat-fp"><span class="stat-label">FP <small>hallucination</small></span><span class="stat-val">${totalFp}</span></span>
+        <span class="stat-chip stat-tn"><span class="stat-label">TN</span><span class="stat-val">${totalTn}</span></span>
+        <span class="stat-chip stat-miss"><span class="stat-label">Miss rate</span><span class="stat-val">${overallMiss}%</span></span>
+      </div>
     </div>`;
   }
   html += `<div class="mt-4 text-sm"><p><b>Passed list:</b> <span class="text-green-700">${esc(state.rois.filter((_,ri)=>us[ri].pass==='PASS').join(', ') || '-')}</span></p><p><b>Failed list:</b> <span class="text-red-700">${esc(state.rois.filter((_,ri)=>us[ri].pass==='FAIL').join(', ') || '-')}</span></p></div>`;
