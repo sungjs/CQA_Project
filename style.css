@@ -212,9 +212,9 @@ button { font-family: inherit; }
 }
 .g { display: grid; background: var(--border-soft); gap: 1px; width: 100%; min-width: max-content; }
 .g > .c {
-  background: var(--bg-card); padding: 0 8px; font-size: 12.5px;
+  background: var(--bg-card); padding: 0 10px; font-size: 13px;
   display: flex; align-items: center; justify-content: center;
-  min-height: 32px; box-sizing: border-box; color: var(--text-default);
+  min-height: 34px; box-sizing: border-box; color: var(--text-default);
 }
 .g > .c.h {
   background: var(--bg-subtle);
@@ -273,7 +273,7 @@ button { font-family: inherit; }
   background: var(--bg-card);
   border: 1px solid var(--border-soft);
   border-radius: var(--r-lg);
-  padding: 18px;
+  padding: 20px 22px;
   box-shadow: var(--shadow-xs);
 }
 
@@ -302,7 +302,7 @@ button { font-family: inherit; }
 .section-hd label input[type="checkbox"] {
   width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer;
 }
-.section-bd { padding: 18px; }
+.section-bd { padding: 20px 22px; }
 
 /* ================================================================
  * BUTTONS — flat, no translateY, refined hover
@@ -674,23 +674,14 @@ body.sidebar-collapsed #sidebar { transform: translateX(-100%); }
 }
 .sidebar-open-btn.hidden { display: none; }
 
-/* 본문은 viewport 전체 활용, 사이드바만큼만 좌측 margin */
+/* 본문: 데스크탑 전체 활용. 너무 넓은 ultra-wide에서만 max-width */
 #appMain {
   margin: 0 auto;
-  padding: 16px 24px 24px;
+  padding: 20px 32px 32px;
+  max-width: 2400px;          /* 4K 이상에서만 제한 */
 }
-body:not(.sidebar-collapsed) #appMain { margin-left: 240px; max-width: none; }
-body.sidebar-collapsed #appMain { margin-left: 0; max-width: none; }
-@media (max-width: 900px) {
-  body:not(.sidebar-collapsed) #appMain { margin-left: 0; }
-  #appMain { padding: 12px 16px 20px; }
-  #sidebar { box-shadow: var(--shadow-elevated); }
-  body:not(.sidebar-collapsed)::after {
-    content: ''; position: fixed; inset: 0;
-    background: rgba(15, 23, 42, 0.32);
-    z-index: 35; pointer-events: none;
-  }
-}
+body:not(.sidebar-collapsed) #appMain { margin-left: 240px; }
+body.sidebar-collapsed #appMain { margin-left: 0; }
 
 /* ================================================================
  * Reduced motion 사용자 존중

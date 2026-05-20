@@ -46,12 +46,12 @@
   <div id="readOnlyBanner" class="read-only-banner hidden">
     🔒 <b>읽기 전용 (Legacy 평가)</b> · 변경 내용은 저장되지 않습니다. XLSX/PDF/MD 내보내기는 가능합니다.
   </div>
-  <header class="flex items-center justify-between mb-5 flex-wrap gap-3">
+  <header class="flex items-center justify-between mb-5 gap-3">
     <div>
       <h1 class="text-xl font-bold text-slate-900 tracking-tight">🧪 CQA Input Tool</h1>
       <p class="text-xs text-slate-500 mt-0.5">ROI/환자 수를 자유롭게 조정하면서 CQA 결과를 입력하고 한 번에 xlsx로 내보냅니다.</p>
     </div>
-    <div class="flex gap-2 flex-wrap items-center">
+    <div class="flex gap-2 items-center">
       <!-- 동기화 상태 -->
       <div id="syncStatus" class="px-1" title="저장 상태">로컬 모드</div>
 
@@ -84,7 +84,7 @@
   </header>
 
   <div class="card mb-4">
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div class="grid grid-cols-2 gap-5">
       <label class="text-sm">
         <span class="block font-medium mb-1.5 text-slate-700">모델명 <span class="text-xs text-slate-400 font-normal">(파일명에 사용)</span></span>
         <input id="projectName" class="plain w-full" placeholder="예: GBM_v1_2026Q2" />
@@ -94,7 +94,7 @@
         <input id="notionLink" class="plain w-full" placeholder="노션 페이지 URL 또는 자유 메모" />
       </label>
     </div>
-    <div class="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center gap-3 text-sm">
+    <div class="mt-4 pt-4 border-t border-slate-100 flex items-center gap-3 text-sm">
       <span class="font-medium text-slate-700">평가 유형</span>
       <div class="segmented">
         <label><input type="radio" name="indicationCategory" value="OAR" />OAR</label>
@@ -136,7 +136,7 @@
     </div>
   </div>
 
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+  <div class="grid grid-cols-3 gap-4 mb-4">
     <div class="card collapsible collapsed">
       <div class="card-hd" onclick="toggleCard(this)">
         <h3>🎯 ROI 목록 (<span id="roiCount">0</span>) <span class="text-xs font-normal text-slate-400">— Cutoff</span></h3>
@@ -194,8 +194,8 @@
       </div>
     </div>
     <div class="card-bd">
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <label class="text-sm md:col-span-1">
+      <div class="grid grid-cols-3 gap-4">
+        <label class="text-sm col-span-1">
           <span class="block font-medium mb-1">케이스 난이도 <span class="text-xs text-slate-400">(1=쉬움/명확 · 5=어려움/애매)</span></span>
           <select id="reviewConfidence" class="plain w-full">
             <option value="">— 선택 —</option>
@@ -206,7 +206,7 @@
             <option value="5">5 (어려움/애매)</option>
           </select>
         </label>
-        <label class="text-sm md:col-span-2">
+        <label class="text-sm col-span-2">
           <span class="block font-medium mb-1">코멘트 / failure mode 노트</span>
           <textarea id="reviewerComment" class="plain w-full" rows="2" placeholder="이 평가의 어려운 점, 모델 특성, 자주 보이는 failure mode 등"></textarea>
         </label>
