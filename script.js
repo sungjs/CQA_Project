@@ -3,9 +3,8 @@ const LS_KEY = 'cqa_input_tool_v2';
 const LAST_PROJECT_LS_KEY = (uid) => `cqa_last_project_${uid}`;
 const SCHEMA_VERSION = 1;
 const CRITERIA_OAR = ['3. Anatomical accuracy', '4. Over-segmentation', '5. Under-segmentation', '6. Smoothness'];
-const CRITERIA_GBM = ['3. Target coverage', '4. Non-target exclusion', '5. Boundary accuracy', '6. Smoothness / technical'];
-const CRITERIA_LIVERMETS = ['3. Per-lesion coverage', '4. Lesion count completeness', '5. Non-target exclusion', '6. Boundary + smoothness'];
-const CRITERIA_CERVIX = ['3. Primary tumor coverage', '4. Parametrial / vaginal extension', '5. Non-target exclusion', '6. Boundary + smoothness'];
+// GTV 공통 sub-metric — subtype(GBM/Cervix/Liver mets) 무관하게 동일 라벨 사용
+const CRITERIA_GTV = ['3. Target coverage', '4. Non-target exclusion', '5. Boundary accuracy', '6. Smoothness / technical'];
 // 호환성: 일부 외부 참조용. 신규 코드는 getCriteria() 사용
 const CRITERIA = CRITERIA_OAR;
 const CUTOFF_TYPES = ['A', 'B', 'C'];
@@ -13,13 +12,7 @@ const REVIEW_KEYS = ['completeness', 'completenessComment', 'usability', 'usabil
 const GTV_COMPLETENESS_STATES = ['TP', 'FN', 'FP', 'TN'];
 
 function getCriteria() {
-  if (state.indicationCategory !== 'GTV') return CRITERIA_OAR;
-  switch (state.gtvSubtype) {
-    case 'GBM':       return CRITERIA_GBM;
-    case 'LiverMets': return CRITERIA_LIVERMETS;
-    case 'Cervix':    return CRITERIA_CERVIX;
-    default:          return CRITERIA_OAR;
-  }
+  return isGtvMode() ? CRITERIA_GTV : CRITERIA_OAR;
 }
 
 function isGtvMode() { return state.indicationCategory === 'GTV'; }
