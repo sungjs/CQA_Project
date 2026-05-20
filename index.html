@@ -100,15 +100,7 @@
         <label><input type="radio" name="indicationCategory" value="OAR" />OAR</label>
         <label><input type="radio" name="indicationCategory" value="GTV" />GTV</label>
       </div>
-      <label id="gtvSubtypeWrap" class="hidden items-center gap-2 ml-1">
-        <span class="text-xs text-slate-400">subtype</span>
-        <select id="gtvSubtype" class="plain text-sm">
-          <option value="GBM">GBM</option>
-          <option value="LiverMets">Liver mets</option>
-          <option value="Cervix">Cervix</option>
-        </select>
-      </label>
-      <span class="text-xs text-slate-400 ml-auto">평가 유형에 따라 Completeness · Specifications 항목이 달라집니다</span>
+      <span class="text-xs text-slate-400 ml-auto">OAR: 누락 체크박스 · GTV: 실제/추론 4-state (TP·FN·FP·TN)</span>
     </div>
   </div>
 
@@ -211,21 +203,6 @@
           <textarea id="reviewerComment" class="plain w-full" rows="2" placeholder="이 평가의 어려운 점, 모델 특성, 자주 보이는 failure mode 등"></textarea>
         </label>
       </div>
-    </div>
-  </div>
-
-  <!-- Patient Metadata 카드 (GTV mode 전용) -->
-  <div id="patientMetaCard" class="card mb-2 collapsible collapsed hidden">
-    <div class="card-hd" onclick="toggleCard(this)">
-      <h3>🩺 <span id="patientMetaTitle">Patient Metadata</span></h3>
-      <div class="flex items-center gap-2">
-        <span class="card-hint">stratified 분석용</span>
-        <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
-      </div>
-    </div>
-    <div class="card-bd">
-      <p id="patientMetaHint" class="text-xs text-slate-500 mb-2">각 환자의 임상 메타데이터를 입력하세요 (stratified analysis용).</p>
-      <div id="patientMetaGrid" class="grid-wrap"></div>
     </div>
   </div>
 

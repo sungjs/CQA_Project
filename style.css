@@ -768,9 +768,6 @@ body.sidebar-collapsed #appMain { margin-left: 0; }
 /* ================================================================
  * GTV subtype + 4-state completeness
  * ================================================================ */
-#gtvSubtypeWrap.hidden { display: none !important; }
-#gtvSubtypeWrap { display: inline-flex; }
-
 .g > .c.comp-tp { background: var(--comp-tp-bg); color: var(--comp-tp-text); }
 .g > .c.comp-fn { background: var(--comp-fn-bg); color: var(--comp-fn-text); position: relative; }
 .g > .c.comp-fn::before {

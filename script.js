@@ -56,46 +56,12 @@ function migrateGtvCompletenessV2() {
   if (migrated > 0) console.log(`[migrate] GTV completeness V1 → V2: ${migrated} cells`);
 }
 
-// indication별 1-5 scale anchor (tooltip)
+// 1-5 scale anchor (tooltip) — OAR/GTV 공통
 function getUsabilityAnchor() {
   if (isGtvMode()) {
-    if (state.gtvSubtype === 'GBM') {
-      return '5: Approve as-is · 4: Minor edit(<5%) · 3: Boundary 조정 · 2: Major edit(≥5%) · 1: Scratch부터 재contour';
-    }
-    if (state.gtvSubtype === 'LiverMets') {
-      return '5: Approve · 4: Minor edit · 3: Boundary 조정 · 2: Major edit(per-lesion) · 1: Unusable (재contour)';
-    }
-    if (state.gtvSubtype === 'Cervix') {
-      return '5: Approve · 4: Minor · 3: Boundary 조정 · 2: Major · 1: Unusable';
-    }
+    return '5: Approve as-is · 4: Minor edit · 3: Boundary 조정 · 2: Major edit · 1: Scratch부터 재contour';
   }
   return '5: Approve · 4: Minor · 3: Moderate · 2: Major · 1: Unusable';
-}
-
-// Subtype별 patient metadata 필드 정의
-const META_FIELDS = {
-  GBM: [
-    { key: 'preOp',          label: 'Post-op (cavity 있음)', type: 'checkbox' },
-    { key: 'newlyDiagnosed', label: 'Newly diagnosed',       type: 'checkbox' },
-    { key: 'recurrence',     label: 'Recurrence',            type: 'checkbox' },
-  ],
-  LiverMets: [
-    { key: 'primaryCancer',  label: 'Primary cancer',
-      type: 'select', options: ['', 'CRC', 'Breast', 'Lung', 'Melanoma', 'Pancreas', 'Stomach', 'Other'] },
-    { key: 'expectedLesions', label: 'Expected lesions (#)', type: 'number', min: 0, max: 99 },
-    { key: 'imagingPhase',   label: 'Imaging phase',
-      type: 'select', options: ['', 'Arterial', 'Portal venous', 'Delayed', 'Multi-phase'] },
-  ],
-  Cervix: [
-    { key: 'tStage',         label: 'T-stage',
-      type: 'select', options: ['', 'T1', 'T2', 'T3', 'T4'] },
-    { key: 'treatment',      label: 'Treatment',
-      type: 'select', options: ['', 'EBRT only', 'EBRT + brachy'] },
-  ],
-};
-function getMetaFields() {
-  if (!isGtvMode()) return null;
-  return META_FIELDS[state.gtvSubtype] || null;
 }
 
 // Firebase 핸들 (init에서 채워짐, 미설정 시 null 유지)
@@ -895,10 +861,6 @@ function renderLists() {
   document.querySelectorAll('input[name="indicationCategory"]').forEach(r => {
     r.checked = r.value === (state.indicationCategory || 'OAR');
   });
-  const gtvWrap = el('gtvSubtypeWrap');
-  if (gtvWrap) gtvWrap.classList.toggle('hidden', state.indicationCategory !== 'GTV');
-  const gtvSel = el('gtvSubtype');
-  if (gtvSel) gtvSel.value = state.gtvSubtype || 'GBM';
 
   renderROIChips();
   renderChipList('valList', state.validations, (i, newVal) => { state.validations[i] = newVal; }, (i) => { removeAtIndex('validations', i); });
@@ -1026,13 +988,9 @@ function setupAddForms() {
   document.querySelectorAll('input[name="indicationCategory"]').forEach(r => {
     r.addEventListener('change', (e) => {
       state.indicationCategory = e.target.value;
-      if (state.indicationCategory === 'GTV' && !state.gtvSubtype) state.gtvSubtype = 'GBM';
       saveState();
       renderAll();
     });
-  });
-  el('gtvSubtype').addEventListener('change', (e) => {
-    state.gtvSubtype = e.target.value; saveState(); renderAll();
   });
   el('reviewConfidence').addEventListener('change', (e) => {
     state.reviewConfidence = e.target.value; saveState();
@@ -1415,7 +1373,6 @@ function renderSummaryView() {
 
 function renderAll() {
   renderLists();
-  renderPatientMetaCard();
   renderCompletenessGrid();
   renderUsabilityGrid();
   renderVariantGrid();
@@ -1424,65 +1381,6 @@ function renderAll() {
   // tooltip 갱신
   const anchor = el('usabilityAnchor');
   if (anchor) anchor.textContent = '1-5 anchor — ' + getUsabilityAnchor();
-}
-
-function renderPatientMetaCard() {
-  const card = el('patientMetaCard');
-  if (!card) return;
-  const fields = getMetaFields();
-  card.classList.toggle('hidden', !fields);
-  if (!fields) return;
-
-  const title = el('patientMetaTitle');
-  if (title) title.textContent = `Patient Metadata — ${state.gtvSubtype}`;
-
-  const grid = el('patientMetaGrid');
-  const V = state.validations.length;
-  if (V === 0) { grid.innerHTML = '<p class="p-4 text-slate-400 text-sm">Validation 환자를 먼저 추가하세요.</p>'; return; }
-
-  // grid columns 가로폭: cap (와이드 모니터에서 과한 stretch 방지)
-  const colW = fields.map(f => f.type === 'select' ? 'minmax(180px,220px)' : f.type === 'number' ? 'minmax(120px,160px)' : 'minmax(160px,220px)');
-  const cols = `${ROWHEAD_W}px ` + colW.join(' ');
-  let html = `<div class="g" style="grid-template-columns:${cols}">`;
-  html += `<div class="c h rh">PatientID</div>`;
-  fields.forEach(f => html += `<div class="c h">${esc(f.label)}</div>`);
-  state.validations.forEach((v, vi) => {
-    html += `<div class="c rh">${esc(v)}</div>`;
-    const meta = state.patientMeta[vi] || {};
-    fields.forEach(f => {
-      const val = meta[f.key];
-      if (f.type === 'checkbox') {
-        html += `<div class="c"><input type="checkbox" class="pmeta-fld" data-vi="${vi}" data-key="${f.key}" data-type="checkbox" ${val ? 'checked' : ''} /></div>`;
-      } else if (f.type === 'select') {
-        const opts = (f.options || []).map(o => `<option value="${esc(o)}" ${val === o ? 'selected' : ''}>${o || '—'}</option>`).join('');
-        html += `<div class="c"><select class="pmeta-fld" data-vi="${vi}" data-key="${f.key}" data-type="select">${opts}</select></div>`;
-      } else if (f.type === 'number') {
-        const min = f.min != null ? `min="${f.min}"` : '';
-        const max = f.max != null ? `max="${f.max}"` : '';
-        html += `<div class="c"><input type="number" ${min} ${max} class="pmeta-fld" data-vi="${vi}" data-key="${f.key}" data-type="number" value="${val != null ? esc(val) : ''}" placeholder="·" /></div>`;
-      } else {
-        html += `<div class="c"><input type="text" class="pmeta-fld" data-vi="${vi}" data-key="${f.key}" data-type="text" value="${esc(val || '')}" /></div>`;
-      }
-    });
-  });
-  html += `</div>`;
-  grid.innerHTML = html;
-
-  grid.querySelectorAll('.pmeta-fld').forEach(inp => {
-    const ev = (inp.dataset.type === 'select' || inp.dataset.type === 'checkbox') ? 'change' : 'input';
-    inp.addEventListener(ev, (e) => {
-      const vi = +e.target.dataset.vi, key = e.target.dataset.key, type = e.target.dataset.type;
-      if (!state.patientMeta[vi]) state.patientMeta[vi] = {};
-      let v;
-      if (type === 'checkbox') v = e.target.checked || undefined;
-      else if (type === 'number') { const n = e.target.value === '' ? null : Number(e.target.value); v = isNaN(n) ? null : n; }
-      else v = e.target.value;
-      if (v === null || v === undefined || v === '' || v === false) delete state.patientMeta[vi][key];
-      else state.patientMeta[vi][key] = v;
-      if (Object.keys(state.patientMeta[vi]).length === 0) delete state.patientMeta[vi];
-      saveState();
-    });
-  });
 }
 
 //==================== XLSX GENERATION (with Styles) ====================
@@ -1724,31 +1622,6 @@ function buildWorkbook() {
     updateRange(ws, 7 + CRITERIA.length, R + 1);
     const cols = [{wch:18},{wch:10},{wch:14},{wch:10},{wch:12}, ...CRITERIA.map(()=>({wch:18})), {wch:24}, {wch:30}];
     ws['!cols'] = cols; XLSX.utils.book_append_sheet(wb, ws, '3-6. Specifications');
-  }
-
-  // ---------- Sheet: Patient Metadata (subtype별) ----------
-  {
-    const fields = getMetaFields();
-    if (gtvX && fields && V > 0) {
-      const ws = {};
-      setC(ws, 'A1', 'Patient', { header: true });
-      fields.forEach((f, i) => setC(ws, `${colLetter(i+2)}1`, f.label, { header: true }));
-      state.validations.forEach((v, vi) => {
-        const r = vi + 2;
-        setC(ws, `A${r}`, v, { rowHeader: true });
-        const meta = state.patientMeta[vi] || {};
-        fields.forEach((f, i) => {
-          const val = meta[f.key];
-          if (val === undefined || val === null || val === '') return;
-          if (f.type === 'checkbox') setC(ws, `${colLetter(i+2)}${r}`, '✓');
-          else if (f.type === 'number') setC(ws, `${colLetter(i+2)}${r}`, val);
-          else setC(ws, `${colLetter(i+2)}${r}`, String(val), { alignLeft: true });
-        });
-      });
-      updateRange(ws, 1 + fields.length, V + 1);
-      ws['!cols'] = [{wch:24}, ...fields.map(()=>({wch:22}))];
-      XLSX.utils.book_append_sheet(wb, ws, 'Patient Metadata');
-    }
   }
 
   return wb;
