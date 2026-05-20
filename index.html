@@ -166,6 +166,36 @@
     </div>
   </div>
 
+  <!-- Reviewer Note 카드 (평가자별 메타데이터, collapsible) -->
+  <div id="reviewerNoteCard" class="card mb-4 collapsible collapsed">
+    <div class="card-hd" onclick="toggleCard(this)">
+      <h3 class="font-semibold text-sm">📝 평가자 노트</h3>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-slate-500">난이도 · 코멘트 · failure mode 메모</span>
+        <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
+      </div>
+    </div>
+    <div class="card-bd">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <label class="text-sm md:col-span-1">
+          <span class="block font-medium mb-1">케이스 난이도 <span class="text-xs text-slate-400">(1=쉬움/명확 · 5=어려움/애매)</span></span>
+          <select id="reviewConfidence" class="plain w-full">
+            <option value="">— 선택 —</option>
+            <option value="1">1 (쉬움)</option>
+            <option value="2">2</option>
+            <option value="3">3 (중간)</option>
+            <option value="4">4</option>
+            <option value="5">5 (어려움/애매)</option>
+          </select>
+        </label>
+        <label class="text-sm md:col-span-2">
+          <span class="block font-medium mb-1">코멘트 / failure mode 노트</span>
+          <textarea id="reviewerComment" class="plain w-full" rows="2" placeholder="이 평가의 어려운 점, 모델 특성, 자주 보이는 failure mode 등"></textarea>
+        </label>
+      </div>
+    </div>
+  </div>
+
   <!-- Patient Metadata 카드 (GTV mode 전용) -->
   <div id="patientMetaCard" class="card mb-4 collapsible collapsed hidden">
     <div class="card-hd" onclick="toggleCard(this)">

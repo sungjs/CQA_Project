@@ -8,7 +8,7 @@ const CRITERIA_GTV = ['3. Target coverage', '4. Non-target exclusion', '5. Bound
 // 호환성: 일부 외부 참조용. 신규 코드는 getCriteria() 사용
 const CRITERIA = CRITERIA_OAR;
 const CUTOFF_TYPES = ['A', 'B', 'C'];
-const REVIEW_KEYS = ['completeness', 'completenessComment', 'usability', 'usabilityComment', 'variant', 'variantComment', 'specs', 'specsComment', 'patientMeta', 'testMeta', 'truthAbsent', 'predPresent'];
+const REVIEW_KEYS = ['completeness', 'completenessComment', 'usability', 'usabilityComment', 'variant', 'variantComment', 'specs', 'specsComment', 'patientMeta', 'testMeta', 'truthAbsent', 'predPresent', 'reviewerComment', 'reviewConfidence'];
 const GTV_COMPLETENESS_STATES = ['TP', 'FN', 'FP', 'TN'];
 
 function getCriteria() {
@@ -142,7 +142,10 @@ function defaultState() {
     testMeta: {},                // [ti] = { ... }
     // GTV mode 전용: 실제/추론 분리 입력
     truthAbsent: {},             // [vi][ri] = true → 실제 "없음" (기본 absent = 실제 "있음")
-    predPresent: {}              // [vi][ri] = true → 추론 "있음" (기본 absent = 추론 "없음")
+    predPresent: {},             // [vi][ri] = true → 추론 "있음" (기본 absent = 추론 "없음")
+    // Reviewer-level metadata (per-reviewer per-model)
+    reviewerComment: '',         // 자유서술 (failure mode 노트 등)
+    reviewConfidence: ''         // '' | '1'..'5' — 케이스 난이도 (1=쉬움, 5=어려움/애매함)
   };
 }
 
@@ -227,7 +230,10 @@ function projectConfigFromState() {
 function reviewFromState() {
   const r = { schemaVersion: SCHEMA_VERSION, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
   if (currentUser?.email) r.reviewerEmail = currentUser.email;
-  REVIEW_KEYS.forEach(k => { r[k] = state[k] || {}; });
+  REVIEW_KEYS.forEach(k => {
+    const v = state[k];
+    r[k] = (v === undefined || v === null) ? (REVIEW_STRING_KEYS.has(k) ? '' : {}) : v;
+  });
   return r;
 }
 
@@ -289,10 +295,14 @@ function applyProjectConfigToState(projectData) {
     state.tests             = projectData.tests || [];
   } finally { suppressSave = false; }
 }
+const REVIEW_STRING_KEYS = new Set(['reviewerComment', 'reviewConfidence']);
 function applyReviewToState(reviewData) {
   suppressSave = true;
   try {
-    REVIEW_KEYS.forEach(k => { state[k] = (reviewData && reviewData[k]) || {}; });
+    REVIEW_KEYS.forEach(k => {
+      const v = reviewData && reviewData[k];
+      state[k] = (v !== undefined && v !== null) ? v : (REVIEW_STRING_KEYS.has(k) ? '' : {});
+    });
     migrateGtvCompletenessV2();
   } finally { suppressSave = false; }
 }
@@ -856,6 +866,9 @@ function initFirebase() {
 function renderLists() {
   el('projectName').value = state.projectName;
   el('notionLink').value = state.notionLink;
+  // Reviewer note (per-reviewer)
+  const rc = el('reviewConfidence'); if (rc) rc.value = state.reviewConfidence || '';
+  const rcm = el('reviewerComment'); if (rcm) rcm.value = state.reviewerComment || '';
   el('roiCount').textContent = state.rois.length;
   el('valCount').textContent = state.validations.length;
   el('testCount').textContent = state.tests.length;
@@ -1002,6 +1015,12 @@ function setupAddForms() {
   });
   el('gtvSubtype').addEventListener('change', (e) => {
     state.gtvSubtype = e.target.value; saveState(); renderAll();
+  });
+  el('reviewConfidence').addEventListener('change', (e) => {
+    state.reviewConfidence = e.target.value; saveState();
+  });
+  el('reviewerComment').addEventListener('input', (e) => {
+    state.reviewerComment = e.target.value; saveState();
   });
 }
 
@@ -1542,7 +1561,18 @@ function buildWorkbook() {
     setC(ws, `C${cRow+1}`, state.rois.filter((_, ri) => usStats[ri].pass === 'FAIL').join(', '), { fail: true, alignLeft: true });
     setC(ws, `B${cRow+2}`, '총평', { rowHeader: true }); setC(ws, `C${cRow+2}`, state.notionLink, { alignLeft: true });
 
-    updateRange(ws, 7, cRow + 2);
+    // Reviewer-level note
+    let extra = 0;
+    if (currentUser?.email || state.reviewConfidence || state.reviewerComment) {
+      extra = 1;
+      setC(ws, `A${cRow+3}`, '평가자', { header: true });
+      setC(ws, `B${cRow+3}`, 'Email', { rowHeader: true }); setC(ws, `C${cRow+3}`, currentUser?.email || '-', { alignLeft: true });
+      setC(ws, `B${cRow+4}`, '케이스 난이도', { rowHeader: true }); setC(ws, `C${cRow+4}`, state.reviewConfidence ? state.reviewConfidence + '/5' : '-', { alignLeft: true });
+      setC(ws, `B${cRow+5}`, '코멘트', { rowHeader: true }); setC(ws, `C${cRow+5}`, state.reviewerComment || '-', { alignLeft: true });
+      extra = 3;
+    }
+
+    updateRange(ws, 7, cRow + 2 + extra);
     ws['!cols'] = [{wch:18},{wch:12},{wch:14},{wch:38},{wch:16},{wch:16},{wch:40}];
     XLSX.utils.book_append_sheet(wb, ws, 'A. Summary');
   }
@@ -1867,8 +1897,19 @@ function generateMdSummary() {
   return md;
 }
 
+function generateMdReviewerNote() {
+  const hasAny = currentUser?.email || state.reviewConfidence || state.reviewerComment;
+  if (!hasAny) return '';
+  const lines = [];
+  if (currentUser?.email) lines.push(`- **평가자:** ${currentUser.email}`);
+  if (state.reviewConfidence) lines.push(`- **케이스 난이도:** ${state.reviewConfidence} / 5`);
+  if (state.reviewerComment) lines.push(`- **코멘트:** ${state.reviewerComment}`);
+  return lines.join('\n');
+}
+
 function generateMdAll() {
   const sections = [
+    ['## 📝 평가자 노트', generateMdReviewerNote()],
     ['## 1. ROI Completeness', generateMdCompleteness()],
     ['## 2. Clinical Usability', generateMdUsability()],
     ['## 7-8. Variant cases', generateMdVariant()],
