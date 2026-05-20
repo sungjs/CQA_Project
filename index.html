@@ -83,7 +83,7 @@
     </div>
   </header>
 
-  <div class="card mb-4">
+  <div class="card mb-2">
     <div class="grid grid-cols-2 gap-5">
       <label class="text-sm">
         <span class="block font-medium mb-1.5 text-slate-700">모델명 <span class="text-xs text-slate-400 font-normal">(파일명에 사용)</span></span>
@@ -112,7 +112,7 @@
     </div>
   </div>
 
-  <div class="card mb-4 collapsible collapsed">
+  <div class="card mb-2 collapsible collapsed">
     <div class="card-hd" onclick="toggleCard(this)">
       <h3>🎚 Cutoff 기준 정의</h3>
       <div class="flex items-center gap-2">
@@ -136,7 +136,7 @@
     </div>
   </div>
 
-  <div class="grid grid-cols-3 gap-4 mb-4">
+  <div class="grid grid-cols-3 gap-3 mb-5">
     <div class="card collapsible collapsed">
       <div class="card-hd" onclick="toggleCard(this)">
         <h3>🎯 ROI 목록 (<span id="roiCount">0</span>) <span class="text-xs font-normal text-slate-400">— Cutoff</span></h3>
@@ -185,7 +185,7 @@
   </div>
 
   <!-- Reviewer Note 카드 (평가자별 메타데이터, collapsible) -->
-  <div id="reviewerNoteCard" class="card mb-4 collapsible collapsed">
+  <div id="reviewerNoteCard" class="card mb-2 collapsible collapsed">
     <div class="card-hd" onclick="toggleCard(this)">
       <h3>📝 평가자 노트</h3>
       <div class="flex items-center gap-2">
@@ -215,7 +215,7 @@
   </div>
 
   <!-- Patient Metadata 카드 (GTV mode 전용) -->
-  <div id="patientMetaCard" class="card mb-4 collapsible collapsed hidden">
+  <div id="patientMetaCard" class="card mb-2 collapsible collapsed hidden">
     <div class="card-hd" onclick="toggleCard(this)">
       <h3>🩺 <span id="patientMetaTitle">Patient Metadata</span></h3>
       <div class="flex items-center gap-2">
@@ -229,7 +229,7 @@
     </div>
   </div>
 
-  <div class="section-wrap mb-3" id="section-completeness" data-section="completeness">
+  <div class="section-wrap mb-2" id="section-completeness" data-section="completeness">
     <div class="section-hd">
       <label><input type="checkbox" class="pdf-chk" checked /><span>📊 1. ROI Completeness</span></label>
       <div class="flex gap-2 items-center">
@@ -243,7 +243,7 @@
     </div>
   </div>
 
-  <div class="section-wrap mb-3" id="section-usability" data-section="usability">
+  <div class="section-wrap mb-2" id="section-usability" data-section="usability">
     <div class="section-hd">
       <label><input type="checkbox" class="pdf-chk" checked /><span>⭐ 2. Clinical Usability</span></label>
       <div class="flex gap-2 items-center">
@@ -258,7 +258,7 @@
     </div>
   </div>
 
-  <div class="section-wrap mb-3" id="section-variant" data-section="variant">
+  <div class="section-wrap mb-2" id="section-variant" data-section="variant">
     <div class="section-hd">
       <label><input type="checkbox" class="pdf-chk" checked /><span>🧬 7-8. Variant cases</span></label>
       <div class="flex gap-2 items-center">
@@ -272,7 +272,7 @@
     </div>
   </div>
 
-  <div class="section-wrap mb-3" id="section-specs" data-section="specs">
+  <div class="section-wrap mb-2" id="section-specs" data-section="specs">
     <div class="section-hd">
       <label><input type="checkbox" class="pdf-chk" checked /><span>📋 3-6. Specifications</span></label>
       <div class="flex gap-2 items-center">
@@ -286,7 +286,7 @@
     </div>
   </div>
 
-  <div class="section-wrap mb-3" id="section-summary" data-section="summary">
+  <div class="section-wrap mb-2" id="section-summary" data-section="summary">
     <div class="section-hd">
       <label><input type="checkbox" class="pdf-chk" checked /><span>📈 A. Summary (미리보기)</span></label>
       <div class="flex gap-2 items-center">
