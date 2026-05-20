@@ -749,6 +749,24 @@ function toggleSidebar() {
   syncSidebarOpenBtn();
 }
 
+// 테마 (light/dark) — 명시 저장 없으면 시스템 prefers 따라감
+function getActiveTheme() {
+  return document.documentElement.getAttribute('data-theme') || 'light';
+}
+function applyTheme(theme) {
+  if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  else document.documentElement.setAttribute('data-theme', 'light');
+  try { localStorage.setItem('cqa_theme', theme); } catch(e) {}
+  syncThemeButtonTitle();
+}
+function toggleTheme() {
+  applyTheme(getActiveTheme() === 'dark' ? 'light' : 'dark');
+}
+function syncThemeButtonTitle() {
+  const btn = el('btnTheme'); if (!btn) return;
+  btn.title = getActiveTheme() === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환';
+}
+
 async function handleSignIn() {
   if (!firebaseReady) {
     alert('Firebase가 설정되지 않았습니다. firebase-config.js를 확인하세요.');
@@ -1040,8 +1058,9 @@ function toggleSection(btn) {
 const ROWHEAD_W = 160; const CELL_W = 90; const COMMENT_W = 220;
 function gridCols(nRoi, extraCols) {
   let s = `${ROWHEAD_W}px`;
-  for (let i = 0; i < nRoi; i++) s += ` ${CELL_W}px`;
-  for (let i = 0; i < extraCols; i++) s += ` ${COMMENT_W}px`;
+  // ROI cell: 최소폭 CELL_W, 가로 공간 남으면 fr 분배
+  for (let i = 0; i < nRoi; i++) s += ` minmax(${CELL_W}px, 1fr)`;
+  for (let i = 0; i < extraCols; i++) s += ` minmax(${COMMENT_W}px, 1.5fr)`;
   return s;
 }
 function openGrid(nRoi, extraCols) { return `<div class="g" style="grid-template-columns:${gridCols(nRoi, extraCols)}">`; }
@@ -1328,7 +1347,7 @@ function renderSpecsGrid() {
   if (R === 0) return c.innerHTML = '<p class="p-4 text-slate-400 text-sm">ROI를 먼저 추가하세요.</p>';
   const CRITERIA = getCriteria();
   const us = computeUsabilityStats(), cp = computeCompletenessStats();
-  const specCols = '160px 80px 80px 100px 100px ' + Array(CRITERIA.length).fill('110px').join(' ') + ' 220px 240px';
+  const specCols = '160px 80px 80px 100px 100px ' + Array(CRITERIA.length).fill('minmax(110px,1fr)').join(' ') + ' minmax(220px,1.5fr) minmax(240px,1.5fr)';
   let html = `<div class="g" style="grid-template-columns:${specCols}">`;
   html += `<div class="c h rh">ROI</div><div class="c h">Cutoff</div><div class="c h">Comp.</div><div class="c h">PASS/FAIL</div><div class="c h">Avg</div>`;
   CRITERIA.forEach(cr => html += `<div class="c h">${esc(cr)}</div>`);
@@ -1419,8 +1438,8 @@ function renderPatientMetaCard() {
   const V = state.validations.length;
   if (V === 0) { grid.innerHTML = '<p class="p-4 text-slate-400 text-sm">Validation 환자를 먼저 추가하세요.</p>'; return; }
 
-  // grid columns 가로폭: select/number는 좀 더 넓게
-  const colW = fields.map(f => f.type === 'select' ? '180px' : f.type === 'number' ? '120px' : '160px');
+  // grid columns 가로폭: fr로 stretch
+  const colW = fields.map(f => f.type === 'select' ? 'minmax(180px,1.4fr)' : f.type === 'number' ? 'minmax(120px,1fr)' : 'minmax(160px,1.2fr)');
   const cols = `${ROWHEAD_W}px ` + colW.join(' ');
   let html = `<div class="g" style="grid-template-columns:${cols}">`;
   html += `<div class="c h rh">PatientID</div>`;
@@ -2079,6 +2098,10 @@ function init() {
       document.body.classList.add('sidebar-collapsed');
     }
   } catch(e) {}
+
+  // 테마 토글 (초기값은 head에서 이미 적용됨)
+  el('btnTheme').onclick = toggleTheme;
+  syncThemeButtonTitle();
 
   // 클라우드 / 인증 wiring
   el('btnSignIn').onclick = handleSignIn;

@@ -189,6 +189,53 @@
 - Toast notification 시스템 (현재 alert 사용 중)
 - 키보드 단축키 cheatsheet 모달
 
+---
+
+## Iteration 7 — 화면 활용 + 다크 모드 + 사이드바 모델명 (사용자 피드백)
+
+### 사용자 피드백
+1. "왠지모르게 밤티나는데 UI를 좀 더 개선해줘" → 어색한 부분 보완
+2. **"테이블 옆 비어있는 공간이 너무 많아"** — 본문 max-width가 모니터보다 작아서 가운데로 몰림
+3. **"다크모드도 해줘"**
+4. **"사이드바에서 모델명이 길면 잘려보이는데 이것도 개선해줘"**
+
+### Change
+
+**1. 본문 가로 공간 활용**
+- `#appMain.max-w-[1600px] mx-auto p-4` Tailwind 제거
+- `#appMain` 자체 CSS로 `padding: 16px 24px 24px`, `max-width: none`
+- `body:not(.sidebar-collapsed) #appMain { margin-left: 240px }` (사이드바 width 240으로 증가)
+- 결과: 와이드 모니터에서 빈 공간 없음
+
+**2. 그리드 셀 stretch (fr 단위)**
+- `gridCols()`: ROI cell `${CELL_W}px` → `minmax(${CELL_W}px, 1fr)`
+- comment cell: `${COMMENT_W}px` → `minmax(${COMMENT_W}px, 1.5fr)`
+- specs grid: 마찬가지로 minmax(110px, 1fr) + comment columns minmax 1.5fr
+- Patient Metadata grid도 select/number/text별 fr 분배
+- `.g { width: 100%; min-width: max-content }` — 컨테이너에 맞춰 stretch + 컨텐츠 클 때만 가로 스크롤
+
+**3. 다크 모드**
+- `:root[data-theme="dark"]` selector로 모든 design token의 dark variant 정의 (50+ 토큰)
+- 자동 감지: 인라인 `<script>` (FOUC 방지) — `localStorage` 저장값 또는 `prefers-color-scheme` 기반 초기 설정
+- 수동 토글: 헤더에 `☀/☾` 아이콘 버튼 (`.btn-icon`). 클릭 시 light↔dark + localStorage 저장
+- 다크 보정: `.chip`, `.btn-primary`, `.btn-dark`, `.read-only-banner`, `body::after` overlay 등 light 전용 색상 따로 처리
+- `color-scheme: light/dark` CSS property로 native 스크롤바/form 컨트롤도 자동 매칭
+- GitHub Primer 색상 팔레트 참고 (`#0d1117`, `#161b22`, `#cdd2d7` 등)
+
+**4. 사이드바 모델명 multi-line**
+- `nowrap + ellipsis` → `display: -webkit-box; -webkit-line-clamp: 2`
+- 2줄까지 wrap, 그 이상은 끝에 ellipsis
+- `word-break: break-word` — 영문 long string에도 동작
+- **hover 시 line-clamp 해제** — full text 보임 (native title tooltip + 인라인 expand 둘 다 작동)
+- reviewer list도 동일 처리 (hover 시 wrap)
+- 사이드바 너비 220 → **240px** (모델명 여유)
+
+### Why
+- Cell stretch는 `minmax(min, 1fr)`이 modern grid 표준 — 작은 ROI 수에선 펼치고 많을 땐 가로 스크롤
+- Pretendard + design token 덕분에 다크 모드는 토큰 값만 swap하면 거의 자동
+- FOUC (Flash Of Unstyled Content) 방지를 위해 stylesheet 적용 직후 인라인 스크립트로 attribute 설정 (Vercel/Linear 등도 동일 패턴)
+- 사이드바 모델명 hover 시 full expand는 native tooltip보다 빠르게 인지 가능 (마우스 정지 없이도 보임)
+
 
 
 

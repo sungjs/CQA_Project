@@ -21,3 +21,13 @@ backup_*.json
 
 # Firebase 로컬 캐시
 .firebase/
+
+# 환자 데이터가 포함된 평가지 원본 (git/hosting 모두 절대 안 됨)
+prev_eval/
+prev_eval_converted/
+
+# Firebase Admin service account key (절대 commit 금지)
+tools/service-account-key.json
+package.json
+package-lock.json
+**/.npm/
