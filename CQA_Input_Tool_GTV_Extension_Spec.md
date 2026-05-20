@@ -87,6 +87,8 @@ OAR과 동일 scale 사용하므로 form 구조 변경 없음. Help tooltip에 i
 
 ### 5. Specifications (3-6) 항목 indication별 분기
 
+> **[구현 메모, 2026-05-20]** 실제 구현에서는 GTV subtype별 분기를 하지 않고 **공통 4개 라벨**로 통일함: Target coverage / Non-target exclusion / Boundary accuracy / Smoothness. 이유: 세 가지 subtype 모두 개념적으로 같은 실패 모드(under-seg / over-seg / edge fidelity / technical quality)를 평가하고, 라벨이 너무 잘게 나뉘면 평가자 혼란이 발생함. OAR은 원래 정의 그대로 유지 (Over-seg / Under-seg가 핵심 의미라 GTV와 의미가 다름). 아래 정의는 원래 설계 의도이며 향후 subtype별 세분화가 필요하면 참조용으로 활용.
+
 현재 3-6번이 OAR organ-specific으로 정의된 항목 list 기반. GTV는 indication별로 다른 sub-item set 필요:
 
 **GBM** (rubric Option A 채택):

@@ -9,10 +9,12 @@ OAR autosegmentation 평가용 단일 페이지 웹 도구. Firebase Hosting + F
 GTV 확장 사양은 [CQA_Input_Tool_GTV_Extension_Spec.md](./CQA_Input_Tool_GTV_Extension_Spec.md)에 정의.
 
 - **Phase 0 (완료)**: localStorage → Firestore 마이그레이션, Google Sign-In (oncosoft.io workspace 제한), 모델별 데이터 격리, multi-reviewer 데이터 모델, Legacy `evaluations` 컬렉션 읽기 전용 노출, 사이드바 트리(모델 → 평가자), 카드 collapsible
-- **Phase 1 (완료)**: GBM single-target — Indication selector (OAR/GTV+subtype), 4-state Completeness (TP/FN/FP/TN), GBM sub-metric, GBM patient metadata, 1-5 anchor tooltip, XLSX/MD export 분기
-- **Phase 2A (완료)**: Liver mets subtype 활성화 + sub-metric (Per-lesion coverage 등) + patient metadata (Primary cancer/Expected lesions/Imaging phase) + Summary GTV 지표 (Miss rate, FP count)
+- **Phase 1 (완료)**: GBM single-target — Indication selector (OAR/GTV+subtype), 4-state Completeness (TP/FN/FP/TN), GBM patient metadata, 1-5 anchor tooltip, XLSX/MD export 분기
+- **Phase 2A (완료)**: Liver mets subtype 활성화 + patient metadata (Primary cancer/Expected lesions/Imaging phase) + Summary GTV 지표 (Miss rate, FP count)
 - **Phase 2B (미착수, 보류)**: Full per-lesion nested data model (`state.lesions[vi]` 배열) + 진짜 multi-target grid. 현재는 사용자가 lesion 카테고리별 ROI를 직접 만들어 평가
-- **Phase 3a (완료)**: Cervix subtype 활성화 + sub-metric (Primary tumor coverage 등) + patient metadata (T-stage / Treatment)
+- **Phase 2C (완료)**: Completeness 실제/추론 분리 입력 (2-column 체크박스, 기본 truth=Y/pred=N) + 모델/평가지 삭제 기능
+- **Phase 3a (완료)**: Cervix subtype 활성화 + patient metadata (T-stage / Treatment)
+- **Phase 3b 결정 변경**: 3-6 Specifications sub-metric을 **subtype별 분기에서 GTV 공통 라벨로 통일** (Target coverage / Non-target exclusion / Boundary accuracy / Smoothness). 의미가 개념적으로 겹쳐서 사용자 혼란 방지 목적. OAR은 별도 (Over-seg/Under-seg).
 - **Phase 3 잔여 (미착수)**: Reviewer-level metadata (confidence, duration), Stratified analysis export, Inter-rater agreement 자동 계산
 
 ## 아키텍처
@@ -68,13 +70,17 @@ Indication 관련 상태 필드 (Phase 1+):
 - `state.gtvSubtype` — `null` | `'GBM'` | `'LiverMets'` | `'Cervix'`
 - `state.patientMeta[vi]` — `{ ... }` subtype별 metadata 필드. `META_FIELDS[subtype]`이 schema 정의
 - `state.testMeta[ti]` — 같은 구조의 test 환자용
+- `state.truthAbsent[vi][ri]` — GTV 전용. true이면 실제 "없음" (default absent = 실제 "있음")
+- `state.predPresent[vi][ri]` — GTV 전용. true이면 추론 "있음" (default absent = 추론 "없음")
 
 핵심 헬퍼:
-- `getCriteria()` — subtype별 CRITERIA 배열 (OAR/GBM/LiverMets/Cervix)
-- `getMetaFields()` — subtype별 patient metadata field 정의
+- `getCriteria()` — OAR vs GTV 분기 (GTV subtype 무관 공통 라벨)
+- `getMetaFields()` — subtype별 patient metadata field 정의 (이건 subtype별 다름 유지)
 - `isGtvMode()` — `state.indicationCategory === 'GTV'`
+- `getCompState4(vi, ri)` — GTV 4-state 파생: `truthAbsent` + `predPresent` → 'TP'|'FN'|'FP'|'TN'
 - `isUnscoreable(vi, ri)` — usability ❌ 잠금 판단. OAR=missing, GTV=FN/TN
 - `getUsabilityAnchor()` — 1-5 scale anchor 텍스트 (subtype별)
+- `migrateGtvCompletenessV2()` — Phase 1 'TP'/'FN'/'FP'/'TN' 문자열 → truthAbsent/predPresent 자동 변환
 
 `loadState()`는 localStorage 폴백 (로그아웃 시). `saveState()`는 localStorage 즉시 + `scheduleCloudSave`로 800ms 디바운스 후 Firestore 쓰기. 읽기 전용 모드면 saveState 자체가 skip.
 
