@@ -536,15 +536,33 @@ function renderProjectPicker() {
     };
     row.appendChild(nameWrap);
 
-    // 삭제 버튼: owner만 (legacy 제외)
-    if (!p._legacy && p.owner === currentUser?.uid) {
-      const delBtn = document.createElement('button');
-      delBtn.type = 'button';
-      delBtn.className = 'row-delete';
-      delBtn.title = '모델 삭제';
-      delBtn.textContent = '🗑';
-      delBtn.onclick = (e) => { e.stopPropagation(); handleDeleteModel(p.id); };
-      row.appendChild(delBtn);
+    // hover action buttons: owner면 삭제 가능, legacy 아닌 모든 모델에서 ID 복사 가능
+    if (!p._legacy) {
+      const actions = document.createElement('div');
+      actions.className = 'row-actions';
+
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'row-action';
+      copyBtn.title = '모델 ID 복사 (다른 평가자에게 공유)';
+      copyBtn.textContent = '📋';
+      copyBtn.onclick = async (e) => {
+        e.stopPropagation();
+        const ok = await clipboardWrite(p.id);
+        toast(ok ? 'success' : 'error', ok ? `모델 ID 복사됨: ${p.id}` : '복사 실패');
+      };
+      actions.appendChild(copyBtn);
+
+      if (p.owner === currentUser?.uid) {
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'row-action row-delete';
+        delBtn.title = '모델 삭제';
+        delBtn.textContent = '🗑';
+        delBtn.onclick = (e) => { e.stopPropagation(); handleDeleteModel(p.id); };
+        actions.appendChild(delBtn);
+      }
+      row.appendChild(actions);
     }
     li.appendChild(row);
 
@@ -1232,7 +1250,27 @@ function setupAddForms() {
   el('notionLink').oninput = (e) => { state.notionLink = e.target.value; saveState(); };
   document.querySelectorAll('input[name="indicationCategory"]').forEach(r => {
     r.addEventListener('change', (e) => {
-      state.indicationCategory = e.target.value;
+      const newCat = e.target.value;
+      const oldCat = state.indicationCategory || 'OAR';
+      if (newCat === oldCat) return;
+      // 데이터 있을 때만 confirm
+      const hasData =
+        Object.keys(state.completeness || {}).length > 0 ||
+        Object.keys(state.truthAbsent || {}).length > 0 ||
+        Object.keys(state.predPresent || {}).length > 0;
+      const meaning = c => c === 'OAR' ? '체크 = 누락' : '실제/추론 4-state (TP/FN/FP/TN)';
+      if (hasData && !confirm(
+        `평가 유형을 ${oldCat} → ${newCat}로 변경하면 Completeness 데이터의 해석이 바뀝니다.\n\n` +
+        `${oldCat}: ${meaning(oldCat)}\n${newCat}: ${meaning(newCat)}\n\n` +
+        `데이터는 보존되지만 자동 매핑은 안 됩니다. 계속하시겠습니까?`
+      )) {
+        // revert radio UI
+        document.querySelectorAll('input[name="indicationCategory"]').forEach(r2 => {
+          r2.checked = r2.value === oldCat;
+        });
+        return;
+      }
+      state.indicationCategory = newCat;
       saveState();
       renderAll();
     });

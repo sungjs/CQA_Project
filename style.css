@@ -673,8 +673,25 @@ body.sidebar-collapsed #sidebar { transform: translateX(-100%); }
 .project-list li.legacy { opacity: 0.92; }
 .project-list li.legacy .project-name::before { content: '🔒 '; font-size: 11px; opacity: 0.7; }
 
-/* Hover 삭제 버튼 */
-.project-list .model-row .row-delete,
+/* 사이드바 hover action 버튼 (모델: ID 복사 + 삭제, reviewer: 삭제) */
+.project-list .row-actions {
+  display: flex; align-items: center; gap: 2px;
+  opacity: 0; transition: opacity var(--tx-fast);
+  flex-shrink: 0;
+}
+.project-list .model-row:hover .row-actions { opacity: 1; }
+.project-list .row-action {
+  background: none; border: 0; cursor: pointer;
+  padding: 2px 6px; border-radius: var(--r-sm);
+  font-size: 12px; color: var(--text-subtle);
+  transition: background var(--tx-fast), color var(--tx-fast);
+  line-height: 1;
+}
+.project-list .row-action:hover { background: var(--bg-emphasis); color: var(--text-strong); }
+.project-list .row-action.row-delete { color: var(--danger); }
+.project-list .row-action.row-delete:hover { background: var(--danger-soft); }
+
+/* Reviewer hover 삭제 버튼 (사이드바 reviewer 행) */
 .reviewer-list .reviewer-item .row-delete {
   background: none; border: 0; cursor: pointer;
   padding: 2px 6px; border-radius: var(--r-sm);
@@ -683,9 +700,7 @@ body.sidebar-collapsed #sidebar { transform: translateX(-100%); }
   transition: opacity var(--tx-fast), background var(--tx-fast);
   color: var(--danger);
 }
-.project-list .model-row:hover .row-delete,
 .reviewer-list .reviewer-item:hover .row-delete { opacity: 0.7; }
-.project-list .model-row .row-delete:hover,
 .reviewer-list .reviewer-item .row-delete:hover { opacity: 1; background: var(--danger-soft); }
 
 /* Sidebar 펼치기 토글 (collapsed 상태에서만 보임) */
