@@ -57,5 +57,14 @@ service cloud.firestore {
       allow read: if isAuthed();
       allow write: if false;
     }
+
+    // Audit trail — critical actions 추적 (create/delete/join). append-only, 본인 이벤트만 read.
+    match /audit/{eventId} {
+      allow create: if isAuthed()
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.timestamp == request.time;
+      allow read: if isAuthed() && resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
   }
 }

@@ -113,13 +113,19 @@
       </div>
     </div>
     <div class="card-bd">
+      <p class="text-xs text-slate-500 mb-3 leading-relaxed">
+        ROI별 PASS 조건은 두 가지를 모두 만족해야 합니다 —
+        <b>① usability 점수 평균이 임계값 이상</b>이고
+        <b>② 임계 점수(N) 이하로 받은 환자 비율이 X% 이하</b>.
+        예: Type A는 <i>"평균 4점 이상 + 3점 이하 받은 환자가 10% 이하"</i>일 때 PASS.
+      </p>
       <table class="text-sm w-full">
         <thead>
           <tr class="text-slate-500 text-xs">
             <th class="text-left w-16">Type</th>
-            <th class="text-center">평균 ≥</th>
-            <th class="text-center">점수 이하 기준 (N점)</th>
-            <th class="text-center">비율 ≤</th>
+            <th class="text-center" title="ROI의 usability 점수 평균 임계값">평균 ≥</th>
+            <th class="text-center" title="문제 case로 간주할 점수 임계값 (2점이하 또는 3점이하)">문제 점수 (≤)</th>
+            <th class="text-center" title="문제 점수 받은 환자가 전체 환자 중 차지하는 비율 임계값">문제 비율 (≤)</th>
             <th class="text-left pl-4">해석</th>
           </tr>
         </thead>
@@ -235,20 +241,6 @@
     </div>
   </div>
 
-  <div class="section-wrap mb-2" id="section-variant" data-section="variant">
-    <div class="section-hd">
-      <label><input type="checkbox" class="pdf-chk" checked /><span>🧬 7-8. Variant cases</span></label>
-      <div class="flex gap-2 items-center">
-        <button class="copy-md-btn" onclick="copyTabMd('variant')">📋 MD 복사</button>
-        <button class="section-toggle-btn" onclick="toggleSection(this)">▲ 접기</button>
-      </div>
-    </div>
-    <div class="section-bd">
-      <p class="text-sm text-slate-600 mb-2">Variant Test 환자 점수 입력. <code>1-5</code> 또는 누락의 경우 <code>x</code>를 입력하면 ❌로 변환됩니다.</p>
-      <div id="variantGrid" class="grid-wrap"></div>
-    </div>
-  </div>
-
   <div class="section-wrap mb-2" id="section-specs" data-section="specs">
     <div class="section-hd">
       <label><input type="checkbox" class="pdf-chk" checked /><span>📋 3-6. Specifications</span></label>
@@ -260,6 +252,20 @@
     <div class="section-bd">
       <p class="text-sm text-slate-600 mb-2">각 ROI에서 개선이 필요한 항목을 체크하세요. 점수는 Clinical Usability 평균에서 자동 반올림됩니다.</p>
       <div id="specsGrid" class="grid-wrap"></div>
+    </div>
+  </div>
+
+  <div class="section-wrap mb-2" id="section-variant" data-section="variant">
+    <div class="section-hd">
+      <label><input type="checkbox" class="pdf-chk" checked /><span>🧬 7-8. Variant cases</span></label>
+      <div class="flex gap-2 items-center">
+        <button class="copy-md-btn" onclick="copyTabMd('variant')">📋 MD 복사</button>
+        <button class="section-toggle-btn" onclick="toggleSection(this)">▲ 접기</button>
+      </div>
+    </div>
+    <div class="section-bd">
+      <p class="text-sm text-slate-600 mb-2">Variant Test 환자 점수 입력. <code>1-5</code> 또는 누락의 경우 <code>x</code>를 입력하면 ❌로 변환됩니다.</p>
+      <div id="variantGrid" class="grid-wrap"></div>
     </div>
   </div>
 
@@ -277,6 +283,19 @@
     </div>
   </div>
 
+  <div class="section-wrap mb-2" id="section-interrater" data-section="interrater">
+    <div class="section-hd">
+      <label><input type="checkbox" class="pdf-chk" /><span>👥 Inter-rater agreement</span></label>
+      <div class="flex gap-2 items-center">
+        <span class="card-hint" id="interraterStatus">평가자 2명 이상일 때 자동 계산</span>
+        <button class="section-toggle-btn" onclick="toggleInterraterSection(this)">▼ 펼치기</button>
+      </div>
+    </div>
+    <div class="section-bd" style="display:none">
+      <div id="interraterContent"></div>
+    </div>
+  </div>
+
   <footer class="app-footer">
     <span class="footer-brand">CQA Input Tool</span>
     <span class="footer-dot">·</span>
@@ -286,6 +305,7 @@
   </footer>
 </div>
 
+<div id="toastStack" aria-live="polite" aria-atomic="true"></div>
 <div id="pdf-print-area"></div>
 <script src="firebase-config.js"></script>
 <script src="script.js"></script>

@@ -975,6 +975,76 @@ label.text-sm > span.block { font-weight: 500; }
 }
 
 /* ================================================================
+ * KAPPA badges (Inter-rater agreement)
+ * ================================================================ */
+.kappa-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  font-size: 11px; font-weight: 600;
+  background: var(--bg-muted);
+}
+.kappa-badge.k-poor       { background: var(--danger-soft);   color: var(--danger-text); }
+.kappa-badge.k-slight     { background: var(--warning-soft);  color: var(--warning-text); }
+.kappa-badge.k-fair       { background: var(--warning-soft);  color: var(--warning-text); }
+.kappa-badge.k-moderate   { background: var(--bg-muted);      color: var(--text-default); }
+.kappa-badge.k-substantial{ background: var(--success-soft);  color: var(--success-text); }
+.kappa-badge.k-perfect    { background: var(--accent-soft);   color: var(--accent-text); }
+
+/* ================================================================
+ * TOAST NOTIFICATION (alert 대체)
+ * ================================================================ */
+#toastStack {
+  position: fixed; top: 20px; right: 20px;
+  z-index: 100;
+  display: flex; flex-direction: column;
+  gap: 8px;
+  max-width: 380px;
+  pointer-events: none;
+}
+.toast {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-muted);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+  font-size: 13px;
+  color: var(--text-default);
+  pointer-events: auto;
+  animation: toast-in 180ms cubic-bezier(0.2, 0, 0.2, 1);
+}
+.toast.toast-success { border-left-color: var(--success); }
+.toast.toast-error   { border-left-color: var(--danger); }
+.toast.toast-warning { border-left-color: var(--warning); }
+.toast.toast-info    { border-left-color: var(--accent); }
+.toast .toast-icon {
+  flex-shrink: 0; font-size: 14px; line-height: 1.3;
+}
+.toast.toast-success .toast-icon { color: var(--success); }
+.toast.toast-error .toast-icon   { color: var(--danger); }
+.toast.toast-warning .toast-icon { color: var(--warning); }
+.toast.toast-info .toast-icon    { color: var(--accent); }
+.toast .toast-body { flex: 1; min-width: 0; line-height: 1.45; word-break: break-word; }
+.toast .toast-close {
+  background: none; border: 0; cursor: pointer;
+  color: var(--text-faint); font-size: 16px; padding: 0 4px;
+  align-self: flex-start;
+  transition: color var(--tx-fast);
+}
+.toast .toast-close:hover { color: var(--text-default); }
+.toast.toast-leaving { animation: toast-out 160ms ease-in forwards; }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes toast-out {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(20px); }
+}
+
+/* ================================================================
  * PDF PRINT AREA (변경 없음)
  * ================================================================ */
 #pdf-print-area { display: none; }

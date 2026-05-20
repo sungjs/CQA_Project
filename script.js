@@ -34,26 +34,48 @@ function isUnscoreable(vi, ri) {
   return getCell(state.completeness, vi, ri) === true; // OAR: missing
 }
 
-// Phase 1 → Phase 2C 자동 마이그레이션: completeness[vi][ri] = 'TP'/'FN'/'FP'/'TN' → truthAbsent + predPresent
-function migrateGtvCompletenessV2() {
-  if (!isGtvMode()) return;
-  const oldComp = state.completeness || {};
-  let migrated = 0;
-  Object.keys(oldComp).forEach(vi => {
-    const vc = oldComp[vi]; if (!vc) return;
-    Object.keys(vc).forEach(ri => {
-      const v = vc[ri];
-      if (typeof v !== 'string' || !['TP','FN','FP','TN'].includes(v)) return;
-      if (v === 'TP') setCell(state.predPresent, +vi, +ri, true);
-      else if (v === 'FP') { setCell(state.truthAbsent, +vi, +ri, true); setCell(state.predPresent, +vi, +ri, true); }
-      else if (v === 'TN') setCell(state.truthAbsent, +vi, +ri, true);
-      // 'FN' = default 상태, 아무것도 저장하지 않음
-      delete vc[ri];
-      migrated++;
+// ===== Schema migration — single source of truth =====
+// review 데이터 한 덩이를 받아 in-place로 최신 schema로 변환.
+// loadState (localStorage) + applyReviewToState (Firestore) 둘 다 이 함수를 호출.
+// indicationCategory도 인자로 받음 (review 자체엔 그 정보 없음 → 호출자가 제공).
+function migrateReviewSchema(review, indicationCategory) {
+  if (!review || typeof review !== 'object') return review;
+  let totalMigrated = 0;
+
+  // V1 → V2: GTV completeness 문자열 ('TP'/'FN'/'FP'/'TN') → truthAbsent + predPresent
+  if (indicationCategory === 'GTV') {
+    const oldComp = review.completeness || {};
+    if (!review.truthAbsent) review.truthAbsent = {};
+    if (!review.predPresent) review.predPresent = {};
+    Object.keys(oldComp).forEach(vi => {
+      const vc = oldComp[vi]; if (!vc || typeof vc !== 'object') return;
+      Object.keys(vc).forEach(ri => {
+        const v = vc[ri];
+        if (typeof v !== 'string' || !['TP','FN','FP','TN'].includes(v)) return;
+        const viN = +vi, riN = +ri;
+        if (v === 'TP') {
+          if (!review.predPresent[viN]) review.predPresent[viN] = {};
+          review.predPresent[viN][riN] = true;
+        } else if (v === 'FP') {
+          if (!review.truthAbsent[viN]) review.truthAbsent[viN] = {};
+          if (!review.predPresent[viN]) review.predPresent[viN] = {};
+          review.truthAbsent[viN][riN] = true; review.predPresent[viN][riN] = true;
+        } else if (v === 'TN') {
+          if (!review.truthAbsent[viN]) review.truthAbsent[viN] = {};
+          review.truthAbsent[viN][riN] = true;
+        }
+        // 'FN' = default 상태, 아무것도 저장하지 않음
+        delete vc[ri];
+        totalMigrated++;
+      });
+      if (Object.keys(vc).length === 0) delete oldComp[vi];
     });
-    if (Object.keys(vc).length === 0) delete oldComp[vi];
-  });
-  if (migrated > 0) console.log(`[migrate] GTV completeness V1 → V2: ${migrated} cells`);
+  }
+
+  // 추가 migration은 여기에 (V2 → V3 등)
+
+  if (totalMigrated > 0) console.log(`[migrate] review schema → V2: ${totalMigrated} cells`);
+  return review;
 }
 
 // 1-5 scale anchor (tooltip) — OAR/GTV 공통
@@ -133,28 +155,8 @@ function loadState() {
     if (!parsed.roiCutoffs) parsed.roiCutoffs = parsed.rois.map(() => 'A');
     while (parsed.roiCutoffs.length < parsed.rois.length) parsed.roiCutoffs.push('A');
     parsed.roiCutoffs = parsed.roiCutoffs.slice(0, parsed.rois.length);
-    // GTV V1 → V2 마이그레이션 (TP/FN/FP/TN 문자열 → truthAbsent/predPresent)
-    if (parsed.indicationCategory === 'GTV') {
-      const oldComp = parsed.completeness || {};
-      Object.keys(oldComp).forEach(vi => {
-        const vc = oldComp[vi]; if (!vc) return;
-        Object.keys(vc).forEach(ri => {
-          const v = vc[ri];
-          if (typeof v !== 'string' || !['TP','FN','FP','TN'].includes(v)) return;
-          if (v === 'TP') { if (!parsed.predPresent[vi]) parsed.predPresent[vi] = {}; parsed.predPresent[vi][ri] = true; }
-          else if (v === 'FP') {
-            if (!parsed.truthAbsent[vi]) parsed.truthAbsent[vi] = {};
-            if (!parsed.predPresent[vi]) parsed.predPresent[vi] = {};
-            parsed.truthAbsent[vi][ri] = true; parsed.predPresent[vi][ri] = true;
-          } else if (v === 'TN') {
-            if (!parsed.truthAbsent[vi]) parsed.truthAbsent[vi] = {};
-            parsed.truthAbsent[vi][ri] = true;
-          }
-          delete vc[ri];
-        });
-        if (Object.keys(vc).length === 0) delete oldComp[vi];
-      });
-    }
+    // 모든 schema migration을 single function이 처리
+    migrateReviewSchema(parsed, parsed.indicationCategory);
     return parsed;
   } catch(e) { return null; }
 }
@@ -269,7 +271,7 @@ function applyReviewToState(reviewData) {
       const v = reviewData && reviewData[k];
       state[k] = (v !== undefined && v !== null) ? v : (REVIEW_STRING_KEYS.has(k) ? '' : {});
     });
-    migrateGtvCompletenessV2();
+    migrateReviewSchema(state, state.indicationCategory);
   } finally { suppressSave = false; }
 }
 
@@ -282,7 +284,7 @@ async function loadReviewerEvaluation(modelId, reviewerUid) {
     const projectRef = fbDb.collection('projects').doc(modelId);
     const reviewRef  = projectRef.collection('reviews').doc(reviewerUid);
     const [pSnap, rSnap] = await Promise.all([projectRef.get(), reviewRef.get()]);
-    if (!pSnap.exists) { alert('모델을 찾을 수 없습니다.'); return false; }
+    if (!pSnap.exists) { toast('error', '모델을 찾을 수 없습니다.'); return false; }
     applyProjectConfigToState(pSnap.data());
     applyReviewToState(rSnap.exists ? rSnap.data() : null);
     currentProjectId = modelId;
@@ -314,7 +316,7 @@ async function loadProjectFromCloud(projectId) {
       setSyncStatus('pending', '불러오는 중…');
       const ref = fbDb.collection('evaluations').doc(projectId);
       const snap = await ref.get();
-      if (!snap.exists) { alert('Legacy 평가를 찾을 수 없습니다.'); return false; }
+      if (!snap.exists) { toast('error', 'Legacy 평가를 찾을 수 없습니다.'); return false; }
       applyLegacyEvaluationToState(snap.data());
       currentProjectId = projectId;
       currentReviewerId = null;
@@ -355,6 +357,7 @@ async function createCloudProject(name, seedFromCurrentState) {
   if (seedFromCurrentState) {
     await projectRef.collection('reviews').doc(currentUser.uid).set(reviewFromState());
   }
+  logAuditEvent('project_create', projectId, { name, seeded: !!seedFromCurrentState });
   return projectId;
 }
 
@@ -579,22 +582,202 @@ function renderProjectPicker() {
   });
 }
 
+// ===== Inter-rater agreement (Fleiss kappa, usability 1-5 ordinal) =====
+async function fetchAllReviewersFull(modelId) {
+  if (!firebaseReady || !modelId) return [];
+  try {
+    const snap = await fbDb.collection('projects').doc(modelId).collection('reviews').get();
+    return snap.docs.map(d => ({ uid: d.id, ...d.data() }));
+  } catch (e) {
+    console.error('fetchAllReviewersFull failed:', e);
+    return [];
+  }
+}
+
+// Fleiss kappa for ROI ri (usability scores 1-5 as nominal categories)
+function fleissKappaForRoi(reviewers, ri, V) {
+  const n = reviewers.length;
+  if (n < 2 || V === 0) return null;
+  const k = 5; // categories 1..5
+  const counts = []; // counts[case_idx] = [c1,c2,c3,c4,c5]
+  let validCases = 0;
+  for (let vi = 0; vi < V; vi++) {
+    const row = [0, 0, 0, 0, 0];
+    let raters = 0;
+    reviewers.forEach(r => {
+      const s = r.usability?.[vi]?.[ri];
+      if (s && !isNaN(+s) && +s >= 1 && +s <= 5) { row[+s - 1]++; raters++; }
+    });
+    if (raters === n) { counts.push(row); validCases++; }
+  }
+  if (validCases === 0) return { kappa: null, validCases: 0, n };
+  const N = validCases;
+  // p_j = column sum / (N * n)
+  const p_j = [0, 0, 0, 0, 0];
+  counts.forEach(row => row.forEach((c, j) => p_j[j] += c));
+  for (let j = 0; j < k; j++) p_j[j] /= (N * n);
+  // P_i for each case
+  const P_i = counts.map(row => {
+    const sumSq = row.reduce((s, c) => s + c * c, 0);
+    return (sumSq - n) / (n * (n - 1));
+  });
+  const P_bar = P_i.reduce((s, p) => s + p, 0) / N;
+  const Pe = p_j.reduce((s, p) => s + p * p, 0);
+  if (Pe === 1) return { kappa: 1, validCases: N, n }; // 모두 같은 카테고리 → 완전 일치
+  const kappa = (P_bar - Pe) / (1 - Pe);
+  return { kappa, validCases: N, n };
+}
+
+function kappaLabel(k) {
+  if (k === null || k === undefined || isNaN(k)) return { text: '-', cls: '' };
+  if (k < 0)    return { text: 'Poor',           cls: 'k-poor' };
+  if (k < 0.2)  return { text: 'Slight',         cls: 'k-slight' };
+  if (k < 0.4)  return { text: 'Fair',           cls: 'k-fair' };
+  if (k < 0.6)  return { text: 'Moderate',       cls: 'k-moderate' };
+  if (k < 0.8)  return { text: 'Substantial',    cls: 'k-substantial' };
+  return { text: 'Almost perfect', cls: 'k-perfect' };
+}
+
+async function renderInterraterAgreement() {
+  const target = el('interraterContent');
+  const status = el('interraterStatus');
+  if (!target) return;
+  if (!firebaseReady || !currentUser || !currentProjectId) {
+    target.innerHTML = '<p class="text-sm text-slate-500">로그인 후 모델을 선택하세요.</p>';
+    if (status) status.textContent = '대기 중';
+    return;
+  }
+  target.innerHTML = '<p class="text-sm text-slate-500">불러오는 중…</p>';
+  const reviewers = await fetchAllReviewersFull(currentProjectId);
+  const n = reviewers.length;
+  if (n < 2) {
+    target.innerHTML = `<p class="text-sm text-slate-500">현재 모델 평가자 ${n}명. 2명 이상의 평가가 있을 때 Fleiss κ를 계산합니다.</p>`;
+    if (status) status.textContent = `평가자 ${n}명`;
+    return;
+  }
+  if (status) status.textContent = `평가자 ${n}명 · Fleiss κ`;
+
+  const V = state.validations.length;
+  const R = state.rois.length;
+  if (V === 0 || R === 0) {
+    target.innerHTML = '<p class="text-sm text-slate-500">ROI / Validation 환자가 필요합니다.</p>';
+    return;
+  }
+
+  // ROI별 kappa
+  const roiKappas = state.rois.map((roi, ri) => {
+    const result = fleissKappaForRoi(reviewers, ri, V);
+    return { roi, ...result };
+  });
+
+  // 평가자 리스트 (이메일 short)
+  const reviewerList = reviewers.map(r => (r.reviewerEmail || r.uid).split('@')[0]).join(' · ');
+
+  let html = `<div class="text-xs text-slate-500 mb-3">
+    평가자(${n}): <b class="text-slate-700">${esc(reviewerList)}</b>
+  </div>`;
+
+  html += `<table class="summary-table"><thead><tr>
+    <th>ROI</th><th>κ</th><th>해석</th><th>유효 케이스</th><th>전체 평가자</th>
+  </tr></thead><tbody>`;
+  roiKappas.forEach(r => {
+    if (r.kappa === null) {
+      html += `<tr><td>${esc(r.roi)}</td><td>-</td><td class="text-slate-400">데이터 부족</td><td>${r.validCases}/${V}</td><td>${r.n}</td></tr>`;
+    } else {
+      const lbl = kappaLabel(r.kappa);
+      html += `<tr><td>${esc(r.roi)}</td><td><b>${r.kappa.toFixed(3)}</b></td><td><span class="kappa-badge ${lbl.cls}">${lbl.text}</span></td><td>${r.validCases}/${V}</td><td>${r.n}</td></tr>`;
+    }
+  });
+  html += `</tbody></table>`;
+
+  // 해석 가이드
+  html += `<details class="mt-4 text-xs text-slate-500">
+    <summary class="cursor-pointer hover:text-slate-700">Fleiss κ 해석 기준 (Landis & Koch, 1977)</summary>
+    <ul class="mt-2 leading-relaxed">
+      <li>< 0: Poor — 우연보다 못함</li>
+      <li>0.00 – 0.20: Slight — 약함</li>
+      <li>0.21 – 0.40: Fair — 보통</li>
+      <li>0.41 – 0.60: Moderate — 중간</li>
+      <li>0.61 – 0.80: Substantial — 상당함</li>
+      <li>0.81 – 1.00: Almost perfect — 거의 완전 일치</li>
+    </ul>
+    <p class="mt-2"><b>유효 케이스</b>: 모든 평가자가 점수를 매긴 환자 수. ❌ 또는 빈 셀이 한 명이라도 있으면 제외.</p>
+  </details>`;
+
+  target.innerHTML = html;
+}
+
+// 토글 + (펼침일 때만) 자동 데이터 갱신
+async function toggleInterraterSection(btn) {
+  toggleSection(btn);
+  const wrap = btn.closest('.section-wrap');
+  const bd = wrap.querySelector('.section-bd');
+  if (bd && bd.style.display !== 'none') {
+    await renderInterraterAgreement();
+  }
+}
+
+// ===== Toast notification (alert 대체) =====
+// kind: 'success' | 'error' | 'warning' | 'info'
+// duration: ms, default 4000 (error는 6000)
+function toast(kind, message, opts) {
+  const stack = el('toastStack'); if (!stack) { console.log(`[${kind}] ${message}`); return; }
+  opts = opts || {};
+  const duration = opts.duration || (kind === 'error' ? 6000 : 4000);
+  const icons = { success: '✓', error: '⚠', warning: '⚠', info: 'ℹ' };
+  const div = document.createElement('div');
+  div.className = `toast toast-${kind}`;
+  div.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  div.innerHTML = `<span class="toast-icon">${icons[kind] || '·'}</span>
+    <div class="toast-body">${esc(message)}</div>
+    <button class="toast-close" aria-label="닫기">×</button>`;
+  stack.appendChild(div);
+
+  const dismiss = () => {
+    if (!div.parentNode) return;
+    div.classList.add('toast-leaving');
+    setTimeout(() => div.remove(), 180);
+  };
+  div.querySelector('.toast-close').onclick = dismiss;
+  if (duration > 0) setTimeout(dismiss, duration);
+  return dismiss;
+}
+
+// ===== Audit trail — critical action 추적 (best-effort, 실패해도 본 동작은 진행) =====
+async function logAuditEvent(action, projectId, metadata) {
+  if (!firebaseReady || !currentUser) return;
+  try {
+    await fbDb.collection('audit').add({
+      uid: currentUser.uid,
+      email: currentUser.email || '',
+      action: action,
+      projectId: projectId || null,
+      metadata: metadata || {},
+      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (e) {
+    console.warn('Audit log failed (non-fatal):', e.message);
+  }
+}
+
 // 모델 전체 삭제 (owner만 가능). reviews 서브컬렉션도 같이 정리
 async function deleteCloudProject(modelId) {
   if (!firebaseReady || !currentUser) return false;
   try {
     const projectRef = fbDb.collection('projects').doc(modelId);
     const reviewsSnap = await projectRef.collection('reviews').get();
+    const reviewerCount = reviewsSnap.size;
     const batch = fbDb.batch();
     reviewsSnap.forEach(d => batch.delete(d.ref));
     batch.delete(projectRef);
     await batch.commit();
     modelReviewersCache.delete(modelId);
     expandedModels.delete(modelId);
+    logAuditEvent('project_delete', modelId, { reviewerCount });
     return true;
   } catch (e) {
     console.error('Delete project failed:', e);
-    alert('모델 삭제 실패: ' + (e.code || e.message));
+    toast('error', '모델 삭제 실패: ' + (e.code || e.message));
     return false;
   }
 }
@@ -605,10 +788,11 @@ async function deleteMyReview(modelId) {
   try {
     await fbDb.collection('projects').doc(modelId).collection('reviews').doc(currentUser.uid).delete();
     modelReviewersCache.delete(modelId);
+    logAuditEvent('review_delete', modelId, {});
     return true;
   } catch (e) {
     console.error('Delete review failed:', e);
-    alert('내 평가 삭제 실패: ' + (e.code || e.message));
+    toast('error', '내 평가 삭제 실패: ' + (e.code || e.message));
     return false;
   }
 }
@@ -660,13 +844,14 @@ async function joinCloudProject(projectId) {
   try {
     const projectRef = fbDb.collection('projects').doc(projectId);
     const snap = await projectRef.get();
-    if (!snap.exists) { alert('모델 ID를 찾을 수 없습니다.'); return false; }
+    if (!snap.exists) { toast('error', '모델 ID를 찾을 수 없습니다.'); return false; }
     const data = snap.data();
     if (!data.members?.includes(currentUser.uid)) {
       await projectRef.update({
         members: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
+      logAuditEvent('join_project', projectId, { name: data.name || '' });
     }
     userProjects = await fetchUserProjects();
     renderProjectPicker();
@@ -674,7 +859,7 @@ async function joinCloudProject(projectId) {
     return true;
   } catch (e) {
     console.error('Join failed:', e);
-    alert('모델 참여 실패: ' + e.message);
+    toast('error', '모델 참여 실패: ' + e.message);
     return false;
   }
 }
@@ -735,7 +920,7 @@ function syncThemeButtonTitle() {
 
 async function handleSignIn() {
   if (!firebaseReady) {
-    alert('Firebase가 설정되지 않았습니다. firebase-config.js를 확인하세요.');
+    toast('error', 'Firebase가 설정되지 않았습니다. firebase-config.js를 확인하세요.');
     return;
   }
   try {
@@ -744,11 +929,11 @@ async function handleSignIn() {
     const result = await fbAuth.signInWithPopup(provider);
     if (!result.user.email || !result.user.email.endsWith('@' + window.CQA_ALLOWED_EMAIL_DOMAIN)) {
       await fbAuth.signOut();
-      alert(`@${window.CQA_ALLOWED_EMAIL_DOMAIN} 계정만 사용할 수 있습니다.`);
+      toast('error', `@${window.CQA_ALLOWED_EMAIL_DOMAIN} 계정만 사용할 수 있습니다.`);
     }
   } catch (e) {
     console.error('Sign in failed:', e);
-    if (e.code !== 'auth/popup-closed-by-user') alert('로그인 실패: ' + e.message);
+    if (e.code !== 'auth/popup-closed-by-user') toast('error', '로그인 실패: ' + e.message);
   }
 }
 
@@ -831,7 +1016,7 @@ function initFirebase() {
       if (user) {
         if (!user.email || !user.email.endsWith('@' + window.CQA_ALLOWED_EMAIL_DOMAIN)) {
           await fbAuth.signOut();
-          alert(`@${window.CQA_ALLOWED_EMAIL_DOMAIN} 계정만 사용할 수 있습니다.`);
+          toast('error', `@${window.CQA_ALLOWED_EMAIL_DOMAIN} 계정만 사용할 수 있습니다.`);
           return;
         }
         await onUserAuthenticated(user);
@@ -1660,7 +1845,7 @@ function importJSON(file) {
       if (!state.roiCutoffs) state.roiCutoffs = state.rois.map(() => 'A');
       while (state.roiCutoffs.length < state.rois.length) state.roiCutoffs.push('A');
       saveState(); renderAll();
-    } catch (err) { alert('JSON 파싱 실패: ' + err.message); }
+    } catch (err) { toast('error', 'JSON 파싱 실패: ' + err.message); }
   };
   reader.readAsText(file);
 }
@@ -1844,21 +2029,21 @@ async function copyTabMd(tab) {
     summary: generateMdSummary
   };
   const md = generators[tab]?.();
-  if (!md) { alert('복사할 데이터가 없습니다.'); return; }
+  if (!md) { toast('warning', '복사할 데이터가 없습니다.'); return; }
   const btn = document.querySelector(`#section-${tab} .copy-md-btn`);
   const ok = await clipboardWrite(md);
   if (btn) {
     btn.textContent = ok ? '✅ 복사됨' : '❌ 복사 실패'; btn.classList.add('copied');
     setTimeout(() => { btn.textContent = '📋 MD 복사'; btn.classList.remove('copied'); }, 1500);
   }
-  if (!ok) alert('클립보드 복사에 실패했습니다. 브라우저 권한을 확인하세요.');
+  if (!ok) toast('error', '클립보드 복사에 실패했습니다. 브라우저 권한을 확인하세요.');
 }
 
 //==================== PDF EXPORT ====================
 function exportPDF() {
   const selected = Array.from(document.querySelectorAll('.pdf-chk:checked'))
     .map(cb => cb.closest('.section-wrap').dataset.section);
-  if (!selected.length) { alert('PDF에 포함할 섹션을 하나 이상 체크하세요.'); return; }
+  if (!selected.length) { toast('warning', 'PDF에 포함할 섹션을 하나 이상 체크하세요.'); return; }
 
   const e = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   function tbl(headers, rows) {
@@ -1926,7 +2111,7 @@ function exportPDF() {
     sections.push(`<section><h2>A. Summary</h2>${tbl(headers, rows)}<p><b>Passed:</b> <span class="pass">${e(passed)}</span></p><p><b>Failed:</b> <span class="fail">${e(failed)}</span></p>${state.notionLink?`<p><b>총평:</b> ${e(state.notionLink)}</p>`:''}</section>`);
   }
 
-  if (!sections.length) { alert('선택한 섹션에 출력할 데이터가 없습니다.'); return; }
+  if (!sections.length) { toast('warning', '선택한 섹션에 출력할 데이터가 없습니다.'); return; }
 
   const area = document.getElementById('pdf-print-area');
   area.innerHTML = `
@@ -1956,12 +2141,12 @@ function init() {
   };
   el('btnCopyAll').onclick = async () => {
     const md = generateMdAll();
-    if (!md) { alert('복사할 데이터가 없습니다.'); return; }
+    if (!md) { toast('warning', '복사할 데이터가 없습니다.'); return; }
     const btn = el('btnCopyAll');
     const ok = await clipboardWrite(md);
     btn.textContent = ok ? '✅ 복사됨' : '❌ 복사 실패';
     setTimeout(() => { btn.textContent = '📋 전체 MD 복사'; }, 1500);
-    if (!ok) alert('클립보드 복사에 실패했습니다. 브라우저 권한을 확인하세요.');
+    if (!ok) toast('error', '클립보드 복사에 실패했습니다. 브라우저 권한을 확인하세요.');
   };
   el('btnExportPdf').onclick = exportPDF;
 
