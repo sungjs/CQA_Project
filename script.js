@@ -4,6 +4,8 @@ const LAST_PROJECT_LS_KEY = (uid) => `cqa_last_project_${uid}`;
 const SCHEMA_VERSION = 1;
 const CRITERIA_OAR = ['3. Anatomical accuracy', '4. Over-segmentation', '5. Under-segmentation', '6. Smoothness'];
 const CRITERIA_GBM = ['3. Target coverage', '4. Non-target exclusion', '5. Boundary accuracy', '6. Smoothness / technical'];
+const CRITERIA_LIVERMETS = ['3. Per-lesion coverage', '4. Lesion count completeness', '5. Non-target exclusion', '6. Boundary + smoothness'];
+const CRITERIA_CERVIX = ['3. Primary tumor coverage', '4. Parametrial / vaginal extension', '5. Non-target exclusion', '6. Boundary + smoothness'];
 // 호환성: 일부 외부 참조용. 신규 코드는 getCriteria() 사용
 const CRITERIA = CRITERIA_OAR;
 const CUTOFF_TYPES = ['A', 'B', 'C'];
@@ -11,8 +13,13 @@ const REVIEW_KEYS = ['completeness', 'completenessComment', 'usability', 'usabil
 const GTV_COMPLETENESS_STATES = ['TP', 'FN', 'FP', 'TN'];
 
 function getCriteria() {
-  if (state.indicationCategory === 'GTV' && state.gtvSubtype === 'GBM') return CRITERIA_GBM;
-  return CRITERIA_OAR;
+  if (state.indicationCategory !== 'GTV') return CRITERIA_OAR;
+  switch (state.gtvSubtype) {
+    case 'GBM':       return CRITERIA_GBM;
+    case 'LiverMets': return CRITERIA_LIVERMETS;
+    case 'Cervix':    return CRITERIA_CERVIX;
+    default:          return CRITERIA_OAR;
+  }
 }
 
 function isGtvMode() { return state.indicationCategory === 'GTV'; }
@@ -26,10 +33,44 @@ function isUnscoreable(vi, ri) {
 
 // indication별 1-5 scale anchor (tooltip)
 function getUsabilityAnchor() {
-  if (isGtvMode() && state.gtvSubtype === 'GBM') {
-    return '5: Approve as-is · 4: Minor edit(<5%) · 3: Boundary 조정 · 2: Major edit(≥5% or clinically significant) · 1: Scratch부터 재contour';
+  if (isGtvMode()) {
+    if (state.gtvSubtype === 'GBM') {
+      return '5: Approve as-is · 4: Minor edit(<5%) · 3: Boundary 조정 · 2: Major edit(≥5%) · 1: Scratch부터 재contour';
+    }
+    if (state.gtvSubtype === 'LiverMets') {
+      return '5: Approve · 4: Minor edit · 3: Boundary 조정 · 2: Major edit(per-lesion) · 1: Unusable (재contour)';
+    }
+    if (state.gtvSubtype === 'Cervix') {
+      return '5: Approve · 4: Minor · 3: Boundary 조정 · 2: Major · 1: Unusable';
+    }
   }
   return '5: Approve · 4: Minor · 3: Moderate · 2: Major · 1: Unusable';
+}
+
+// Subtype별 patient metadata 필드 정의
+const META_FIELDS = {
+  GBM: [
+    { key: 'preOp',          label: 'Post-op (cavity 있음)', type: 'checkbox' },
+    { key: 'newlyDiagnosed', label: 'Newly diagnosed',       type: 'checkbox' },
+    { key: 'recurrence',     label: 'Recurrence',            type: 'checkbox' },
+  ],
+  LiverMets: [
+    { key: 'primaryCancer',  label: 'Primary cancer',
+      type: 'select', options: ['', 'CRC', 'Breast', 'Lung', 'Melanoma', 'Pancreas', 'Stomach', 'Other'] },
+    { key: 'expectedLesions', label: 'Expected lesions (#)', type: 'number', min: 0, max: 99 },
+    { key: 'imagingPhase',   label: 'Imaging phase',
+      type: 'select', options: ['', 'Arterial', 'Portal venous', 'Delayed', 'Multi-phase'] },
+  ],
+  Cervix: [
+    { key: 'tStage',         label: 'T-stage',
+      type: 'select', options: ['', 'T1', 'T2', 'T3', 'T4'] },
+    { key: 'treatment',      label: 'Treatment',
+      type: 'select', options: ['', 'EBRT only', 'EBRT + brachy'] },
+  ],
+};
+function getMetaFields() {
+  if (!isGtvMode()) return null;
+  return META_FIELDS[state.gtvSubtype] || null;
 }
 
 // Firebase 핸들 (init에서 채워짐, 미설정 시 null 유지)
@@ -1114,17 +1155,38 @@ function renderSpecsGrid() {
 
 function renderSummaryView() {
   const c = el('summaryView'), us = computeUsabilityStats(), cp = computeCompletenessStats();
-  let html = '<table class="summary-table"><thead><tr><th>ROI</th><th>Cutoff</th><th>PASS/FAIL</th><th>Avg</th><th>Ratio(≤2)</th><th>Ratio(≤3)</th><th>Completeness</th><th>Improvement</th></tr></thead><tbody>';
+  const gtv = isGtvMode();
+  const CRITERIA = getCriteria();
+  let html = '<table class="summary-table"><thead><tr><th>ROI</th><th>Cutoff</th><th>PASS/FAIL</th><th>Avg</th><th>Ratio(≤2)</th><th>Ratio(≤3)</th>';
+  if (gtv) html += '<th>Miss rate</th><th>FP count</th>';
+  html += '<th>Completeness</th><th>Improvement</th></tr></thead><tbody>';
   state.rois.forEach((roi, ri) => {
     const u = us[ri], imp = CRITERIA.filter((_, ci) => getCell(state.specs, ri, ci));
+    const cps = cp[ri];
     const barColor = u.pass === 'PASS' ? '#059669' : u.avg !== null && u.avg >= 3 ? '#d97706' : '#dc2626';
     const barWidth = u.avg !== null ? (u.avg / 5 * 100).toFixed(0) : 0;
     const avgCell = u.avg !== null
       ? `<div style="display:flex;align-items:center;gap:6px;justify-content:center;">${u.avg.toFixed(2)}<div class="prog-bar"><div class="prog-fill" style="width:${barWidth}%;background:${barColor}"></div></div></div>`
       : '-';
-    html += `<tr><td>${esc(roi)}</td><td><b>${state.roiCutoffs[ri]}</b></td><td class="${u.pass==='PASS'?'pass':u.pass==='FAIL'?'fail':''}">${u.pass||'-'}</td><td>${avgCell}</td><td>${u.r2!==null?(u.r2*100).toFixed(0)+'%':'-'}</td><td>${u.r3!==null?(u.r3*100).toFixed(0)+'%':'-'}</td><td>${(cp[ri].completeness*100).toFixed(0)}%</td><td class="text-xs">${esc(imp.join(', '))}</td></tr>`;
+    let row = `<tr><td>${esc(roi)}</td><td><b>${state.roiCutoffs[ri]}</b></td><td class="${u.pass==='PASS'?'pass':u.pass==='FAIL'?'fail':''}">${u.pass||'-'}</td><td>${avgCell}</td><td>${u.r2!==null?(u.r2*100).toFixed(0)+'%':'-'}</td><td>${u.r3!==null?(u.r3*100).toFixed(0)+'%':'-'}</td>`;
+    if (gtv) {
+      const denom = cps.tp + cps.fn;
+      const missRate = denom ? (cps.fn / denom * 100).toFixed(0) + '%' : '-';
+      row += `<td class="${cps.fn > 0 ? 'fail' : ''}">${missRate}</td><td>${cps.fp || '-'}</td>`;
+    }
+    row += `<td>${(cps.completeness*100).toFixed(0)}%</td><td class="text-xs">${esc(imp.join(', '))}</td></tr>`;
+    html += row;
   });
   html += '</tbody></table>';
+  if (gtv) {
+    // 전체 patient-level 집계
+    let totalFn = 0, totalFp = 0, totalTp = 0, totalTn = 0;
+    cp.forEach(s => { totalFn += s.fn; totalFp += s.fp; totalTp += s.tp; totalTn += s.tn; });
+    const overallMiss = (totalTp + totalFn) ? (totalFn / (totalTp + totalFn) * 100).toFixed(1) : '-';
+    html += `<div class="mt-3 p-3 bg-amber-50 border border-amber-200 rounded text-sm">
+      <b>GTV 전체 지표</b> · TP: ${totalTp} · <span class="text-red-700">FN(missed): ${totalFn}</span> · <span class="text-amber-700">FP(hallucination): ${totalFp}</span> · TN: ${totalTn} · <b>Miss rate: ${overallMiss}%</b>
+    </div>`;
+  }
   html += `<div class="mt-4 text-sm"><p><b>Passed list:</b> <span class="text-green-700">${esc(state.rois.filter((_,ri)=>us[ri].pass==='PASS').join(', ') || '-')}</span></p><p><b>Failed list:</b> <span class="text-red-700">${esc(state.rois.filter((_,ri)=>us[ri].pass==='FAIL').join(', ') || '-')}</span></p></div>`;
   c.innerHTML = html;
 }
@@ -1142,30 +1204,23 @@ function renderAll() {
   if (anchor) anchor.textContent = '1-5 anchor — ' + getUsabilityAnchor();
 }
 
-// GBM patient metadata fields
-const GBM_META_FIELDS = [
-  { key: 'preOp',           label: 'Post-op (cavity 있음)', type: 'checkbox' },
-  { key: 'newlyDiagnosed',  label: 'Newly diagnosed',       type: 'checkbox' },
-  { key: 'recurrence',      label: 'Recurrence',            type: 'checkbox' },
-];
-
 function renderPatientMetaCard() {
   const card = el('patientMetaCard');
   if (!card) return;
-  const showFor = isGtvMode() && state.gtvSubtype === 'GBM';
-  card.classList.toggle('hidden', !showFor);
-  if (!showFor) return;
+  const fields = getMetaFields();
+  card.classList.toggle('hidden', !fields);
+  if (!fields) return;
 
   const title = el('patientMetaTitle');
-  if (title) title.textContent = 'Patient Metadata — GBM';
+  if (title) title.textContent = `Patient Metadata — ${state.gtvSubtype}`;
 
   const grid = el('patientMetaGrid');
   const V = state.validations.length;
   if (V === 0) { grid.innerHTML = '<p class="p-4 text-slate-400 text-sm">Validation 환자를 먼저 추가하세요.</p>'; return; }
 
-  const fields = GBM_META_FIELDS;
-  // grid-template-columns: rowhead + fields × N + comment(optional)
-  const cols = `${ROWHEAD_W}px ` + fields.map(() => '160px').join(' ');
+  // grid columns 가로폭: select/number는 좀 더 넓게
+  const colW = fields.map(f => f.type === 'select' ? '180px' : f.type === 'number' ? '120px' : '160px');
+  const cols = `${ROWHEAD_W}px ` + colW.join(' ');
   let html = `<div class="g" style="grid-template-columns:${cols}">`;
   html += `<div class="c h rh">PatientID</div>`;
   fields.forEach(f => html += `<div class="c h">${esc(f.label)}</div>`);
@@ -1173,22 +1228,38 @@ function renderPatientMetaCard() {
     html += `<div class="c rh">${esc(v)}</div>`;
     const meta = state.patientMeta[vi] || {};
     fields.forEach(f => {
-      const checked = !!meta[f.key];
-      html += `<div class="c"><input type="checkbox" class="pmeta-chk" data-vi="${vi}" data-key="${f.key}" ${checked ? 'checked' : ''} /></div>`;
+      const val = meta[f.key];
+      if (f.type === 'checkbox') {
+        html += `<div class="c"><input type="checkbox" class="pmeta-fld" data-vi="${vi}" data-key="${f.key}" data-type="checkbox" ${val ? 'checked' : ''} /></div>`;
+      } else if (f.type === 'select') {
+        const opts = (f.options || []).map(o => `<option value="${esc(o)}" ${val === o ? 'selected' : ''}>${o || '—'}</option>`).join('');
+        html += `<div class="c"><select class="pmeta-fld" data-vi="${vi}" data-key="${f.key}" data-type="select">${opts}</select></div>`;
+      } else if (f.type === 'number') {
+        const min = f.min != null ? `min="${f.min}"` : '';
+        const max = f.max != null ? `max="${f.max}"` : '';
+        html += `<div class="c"><input type="number" ${min} ${max} class="pmeta-fld" data-vi="${vi}" data-key="${f.key}" data-type="number" value="${val != null ? esc(val) : ''}" placeholder="·" /></div>`;
+      } else {
+        html += `<div class="c"><input type="text" class="pmeta-fld" data-vi="${vi}" data-key="${f.key}" data-type="text" value="${esc(val || '')}" /></div>`;
+      }
     });
   });
   html += `</div>`;
   grid.innerHTML = html;
 
-  grid.querySelectorAll('.pmeta-chk').forEach(chk => {
-    chk.onchange = (e) => {
-      const vi = +e.target.dataset.vi, key = e.target.dataset.key;
+  grid.querySelectorAll('.pmeta-fld').forEach(inp => {
+    const ev = (inp.dataset.type === 'select' || inp.dataset.type === 'checkbox') ? 'change' : 'input';
+    inp.addEventListener(ev, (e) => {
+      const vi = +e.target.dataset.vi, key = e.target.dataset.key, type = e.target.dataset.type;
       if (!state.patientMeta[vi]) state.patientMeta[vi] = {};
-      if (e.target.checked) state.patientMeta[vi][key] = true;
-      else delete state.patientMeta[vi][key];
+      let v;
+      if (type === 'checkbox') v = e.target.checked || undefined;
+      else if (type === 'number') { const n = e.target.value === '' ? null : Number(e.target.value); v = isNaN(n) ? null : n; }
+      else v = e.target.value;
+      if (v === null || v === undefined || v === '' || v === false) delete state.patientMeta[vi][key];
+      else state.patientMeta[vi][key] = v;
       if (Object.keys(state.patientMeta[vi]).length === 0) delete state.patientMeta[vi];
       saveState();
-    };
+    });
   });
 }
 
@@ -1423,22 +1494,29 @@ function buildWorkbook() {
     ws['!cols'] = cols; XLSX.utils.book_append_sheet(wb, ws, '3-6. Specifications');
   }
 
-  // ---------- Sheet: Patient Metadata (GBM 전용) ----------
-  if (gtvX && state.gtvSubtype === 'GBM' && V > 0) {
-    const ws = {};
-    setC(ws, 'A1', 'Patient', { header: true });
-    GBM_META_FIELDS.forEach((f, i) => setC(ws, `${colLetter(i+2)}1`, f.label, { header: true }));
-    state.validations.forEach((v, vi) => {
-      const r = vi + 2;
-      setC(ws, `A${r}`, v, { rowHeader: true });
-      const meta = state.patientMeta[vi] || {};
-      GBM_META_FIELDS.forEach((f, i) => {
-        if (meta[f.key]) setC(ws, `${colLetter(i+2)}${r}`, '✓');
+  // ---------- Sheet: Patient Metadata (subtype별) ----------
+  {
+    const fields = getMetaFields();
+    if (gtvX && fields && V > 0) {
+      const ws = {};
+      setC(ws, 'A1', 'Patient', { header: true });
+      fields.forEach((f, i) => setC(ws, `${colLetter(i+2)}1`, f.label, { header: true }));
+      state.validations.forEach((v, vi) => {
+        const r = vi + 2;
+        setC(ws, `A${r}`, v, { rowHeader: true });
+        const meta = state.patientMeta[vi] || {};
+        fields.forEach((f, i) => {
+          const val = meta[f.key];
+          if (val === undefined || val === null || val === '') return;
+          if (f.type === 'checkbox') setC(ws, `${colLetter(i+2)}${r}`, '✓');
+          else if (f.type === 'number') setC(ws, `${colLetter(i+2)}${r}`, val);
+          else setC(ws, `${colLetter(i+2)}${r}`, String(val), { alignLeft: true });
+        });
       });
-    });
-    updateRange(ws, 1 + GBM_META_FIELDS.length, V + 1);
-    ws['!cols'] = [{wch:24}, ...GBM_META_FIELDS.map(()=>({wch:22}))];
-    XLSX.utils.book_append_sheet(wb, ws, 'Patient Metadata');
+      updateRange(ws, 1 + fields.length, V + 1);
+      ws['!cols'] = [{wch:24}, ...fields.map(()=>({wch:22}))];
+      XLSX.utils.book_append_sheet(wb, ws, 'Patient Metadata');
+    }
   }
 
   return wb;
