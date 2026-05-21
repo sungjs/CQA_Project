@@ -1,14 +1,25 @@
 //==================== STATE ====================
 const LS_KEY = 'cqa_input_tool_v2';
 const LAST_PROJECT_LS_KEY = (uid) => `cqa_last_project_${uid}`;
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 3;
+
+// ===== Unified Detection (Schema v3, framework v3) =====
+// GTV mode: 환자×ROI별로 tumorPresent / missed / hallucinated 3-input 평가
+// Default: TP case (가장 흔함) — 셀에 아무 입력 없으면 자동 TP로 derive
+const DETECTION_DEFAULTS = Object.freeze({
+  tumorPresent: 'Y',     // Y | N
+  missed:       'none',  // none | few (1-2) | several (3-5) | many (>5)
+  hallucinated: 'none'   // none | few | several | many
+});
+const COUNT_BINS = ['none', 'few', 'several', 'many'];
+const COUNT_BIN_LABEL = { none: 'None', few: '1-2', several: '3-5', many: '>5' };
 const CRITERIA_OAR = ['3. Anatomical accuracy', '4. Over-segmentation', '5. Under-segmentation', '6. Smoothness'];
 // GTV 공통 sub-metric — subtype(GBM/Cervix/Liver mets) 무관하게 동일 라벨 사용
 const CRITERIA_GTV = ['3. Target coverage', '4. Non-target exclusion', '5. Boundary accuracy', '6. Smoothness / technical'];
 // 호환성: 일부 외부 참조용. 신규 코드는 getCriteria() 사용
 const CRITERIA = CRITERIA_OAR;
 const CUTOFF_TYPES = ['A', 'B', 'C'];
-const REVIEW_KEYS = ['completeness', 'completenessComment', 'usability', 'usabilityComment', 'variant', 'variantComment', 'specs', 'specsComment', 'patientMeta', 'testMeta', 'truthAbsent', 'predPresent', 'reviewerComment', 'reviewConfidence'];
+const REVIEW_KEYS = ['completeness', 'completenessComment', 'usability', 'usabilityComment', 'variant', 'variantComment', 'specs', 'specsComment', 'patientMeta', 'testMeta', 'truthAbsent', 'predPresent', 'detection', 'reviewerComment', 'reviewConfidence'];
 const GTV_COMPLETENESS_STATES = ['TP', 'FN', 'FP', 'TN'];
 
 function getDefaultCriteria() {
@@ -27,12 +38,43 @@ function getCriteria() {
 
 function isGtvMode() { return state.indicationCategory === 'GTV'; }
 
-// GTV 4-state 파생: truthAbsent + predPresent → 'TP'|'FN'|'FP'|'TN'
+// V3 unified detection helpers
+function getDetection(vi, ri) {
+  return state.detection?.[vi]?.[ri] || null;
+}
+// 4-state 파생 (V3): detection {tumorPresent, missed, hallucinated} → 'TP'|'FN'|'FP'|'TN'
+function deriveDetectionState(detection) {
+  const d = detection || {};
+  const tumor = d.tumorPresent || DETECTION_DEFAULTS.tumorPresent;
+  const missed = d.missed || DETECTION_DEFAULTS.missed;
+  const hallucinated = d.hallucinated || DETECTION_DEFAULTS.hallucinated;
+  if (tumor === 'N') return hallucinated === 'none' ? 'TN' : 'FP';
+  return missed === 'none' ? 'TP' : 'FN';
+}
+// 호환성 유지: 기존 호출처(stats, export 등)가 위 derive를 단일 함수로 사용
 function getCompState4(vi, ri) {
-  const truthAbsent = !!getCell(state.truthAbsent, vi, ri);
-  const predPresent = !!getCell(state.predPresent, vi, ri);
-  if (truthAbsent) return predPresent ? 'FP' : 'TN';
-  return predPresent ? 'TP' : 'FN';
+  return deriveDetectionState(getDetection(vi, ri));
+}
+// missed/hallucinated bin 분포 집계 (Summary용)
+function getDetectionBin(vi, ri, key) {
+  const d = getDetection(vi, ri);
+  return (d && d[key]) || DETECTION_DEFAULTS[key];
+}
+// detection 셀에 field 변경 적용 (default 값이면 entry 정리 — sparse 유지)
+function setDetection(vi, ri, field, value) {
+  if (!state.detection) state.detection = {};
+  const isDefault = value === DETECTION_DEFAULTS[field];
+  if (isDefault) {
+    if (state.detection[vi] && state.detection[vi][ri]) {
+      delete state.detection[vi][ri][field];
+      if (Object.keys(state.detection[vi][ri]).length === 0) delete state.detection[vi][ri];
+      if (Object.keys(state.detection[vi]).length === 0) delete state.detection[vi];
+    }
+  } else {
+    if (!state.detection[vi]) state.detection[vi] = {};
+    if (!state.detection[vi][ri]) state.detection[vi][ri] = {};
+    state.detection[vi][ri][field] = value;
+  }
 }
 
 // completeness 셀이 usability 점수 불가 상태인지 판단
@@ -74,7 +116,6 @@ function migrateReviewSchema(review, indicationCategory) {
           if (!review.truthAbsent[viN]) review.truthAbsent[viN] = {};
           review.truthAbsent[viN][riN] = true;
         }
-        // 'FN' = default 상태, 아무것도 저장하지 않음
         delete vc[ri];
         totalMigrated++;
       });
@@ -82,9 +123,49 @@ function migrateReviewSchema(review, indicationCategory) {
     });
   }
 
-  // 추가 migration은 여기에 (V2 → V3 등)
+  // V2 → V3: GTV truthAbsent + predPresent → detection
+  // 주의: V2 default (둘 다 비어있음 = FN)은 V3에서 정보 손실 (V3 default = TP).
+  // 명시적으로 마킹된 entry만 보존됨. 사용자가 평가 도중이면 ROI별로 미입력 셀이 의미 바뀜 — onboarding hint 권장.
+  if (indicationCategory === 'GTV' && (review.truthAbsent || review.predPresent)) {
+    const detection = review.detection || {};
+    let v3migrated = 0;
+    const visited = new Set();
+    const addEntry = (vi, ri, truthAbsent, predPresent) => {
+      const key = `${vi}_${ri}`;
+      if (visited.has(key)) return;
+      visited.add(key);
+      let entry = {};
+      if (truthAbsent === true) {
+        entry.tumorPresent = 'N';
+        if (predPresent === true) entry.hallucinated = 'few'; // FP — legacy 표현은 1개로 가정
+      } else {
+        if (predPresent !== true) entry.missed = 'few'; // FN — legacy 표현은 1개
+        // tumorPresent === 'Y' (default), missed === 'none' (default) → TP, entry 빈 객체
+      }
+      if (Object.keys(entry).length > 0) {
+        if (!detection[vi]) detection[vi] = {};
+        if (!detection[vi][ri]) { detection[vi][ri] = entry; v3migrated++; }
+      }
+    };
+    for (const vi in (review.truthAbsent || {})) {
+      for (const ri in review.truthAbsent[vi]) {
+        addEntry(vi, ri, review.truthAbsent[vi][ri] === true, review.predPresent?.[vi]?.[ri] === true);
+      }
+    }
+    for (const vi in (review.predPresent || {})) {
+      for (const ri in review.predPresent[vi]) {
+        addEntry(vi, ri, review.truthAbsent?.[vi]?.[ri] === true, review.predPresent[vi][ri] === true);
+      }
+    }
+    review.detection = detection;
+    if (v3migrated > 0) {
+      totalMigrated += v3migrated;
+      // legacy 필드는 v3에서 보존 (rollback 가능). v4에서 제거.
+      console.log(`[migrate] V2 → V3: ${v3migrated} cells (legacy truthAbsent/predPresent 보존)`);
+    }
+  }
 
-  if (totalMigrated > 0) console.log(`[migrate] review schema → V2: ${totalMigrated} cells`);
+  if (totalMigrated > 0) console.log(`[migrate] review schema → V3: total ${totalMigrated} cells`);
   return review;
 }
 
@@ -140,9 +221,12 @@ function defaultState() {
     testMeta: {},                // [ti] = { ... }
     // Sub-metric 라벨 — null이면 default (OAR/GTV별 4개) 사용. owner-defined.
     subMetricLabels: null,
-    // GTV mode 전용: 실제/추론 분리 입력
-    truthAbsent: {},             // [vi][ri] = true → 실제 "없음" (기본 absent = 실제 "있음")
-    predPresent: {},             // [vi][ri] = true → 추론 "있음" (기본 absent = 추론 "없음")
+    // GTV mode (Schema v3, framework v3): unified detection
+    // [vi][ri] = { tumorPresent?, missed?, hallucinated? } — sparse, default 값은 저장 안 함
+    detection: {},
+    // Legacy GTV (v2 schema, v3에서 자동 마이그레이션됨, rollback용으로 보존)
+    truthAbsent: {},
+    predPresent: {},
     // Reviewer-level metadata (per-reviewer per-model)
     reviewerComment: '',         // 자유서술 (failure mode 노트 등)
     reviewConfidence: ''         // '' | '1'..'5' — 케이스 난이도 (1=쉬움, 5=어려움/애매함)
@@ -1131,7 +1215,13 @@ function renderLists() {
   renderCutoffTable();
 }
 
+function syncCutoffHint() {
+  const hint = el('cutoffGtvHint');
+  if (hint) hint.classList.toggle('hidden', !isGtvMode());
+}
+
 function renderCutoffTable() {
+  syncCutoffHint();
   const tbody = el('cutoffBody');
   let html = '';
   const typeDesc = { A: '엄격 (고성능 요구)', B: '중간', C: '완화' };
@@ -1201,12 +1291,14 @@ function removeAtIndex(listKey, idx) {
     shiftSecondaryKey(state.variant, idx); shiftPrimaryKey(state.specs, idx);
     if (state.truthAbsent)  shiftSecondaryKey(state.truthAbsent, idx);
     if (state.predPresent)  shiftSecondaryKey(state.predPresent, idx);
+    if (state.detection)    shiftSecondaryKey(state.detection, idx);
   } else if (listKey === 'validations') {
     shiftPrimaryKey(state.completeness, idx); shiftPrimaryKey(state.usability, idx);
     shiftPrimaryKey(state.completenessComment, idx); shiftPrimaryKey(state.usabilityComment, idx);
     if (state.patientMeta)  shiftPrimaryKey(state.patientMeta, idx);
     if (state.truthAbsent)  shiftPrimaryKey(state.truthAbsent, idx);
     if (state.predPresent)  shiftPrimaryKey(state.predPresent, idx);
+    if (state.detection)    shiftPrimaryKey(state.detection, idx);
   } else if (listKey === 'tests') {
     shiftPrimaryKey(state.variant, idx); shiftPrimaryKey(state.variantComment, idx);
     if (state.testMeta) shiftPrimaryKey(state.testMeta, idx);
@@ -1322,41 +1414,54 @@ function renderCompletenessGrid() {
 
   const hint = el('completenessHint');
   if (hint) hint.textContent = gtv
-    ? '각 환자×ROI에 "실제(있음=✓)"와 "추론(있음=✓)"을 체크하세요. 실제는 기본 ✓(있음), 추론은 기본 □(없음). 셀 배경색으로 TP/FN/FP/TN이 자동 표시됩니다.'
+    ? '각 환자×ROI 셀에 3개 입력: Tumor 유무, 놓친(missed) lesion 개수, 추가(hallucinated) lesion 개수. 모두 default 두면 TP. Multi-island case도 자연스럽게 표현됩니다.'
     : '각 환자에서 ROI가 누락됐으면 체크하세요. (체크=누락, 빈칸=존재). xlsx에는 존재 셀이 - 로, 누락 셀이 빈칸으로 저장됩니다.';
 
   let html;
   if (gtv) {
-    // 2 columns per ROI: 실제 / 추론
-    const colCount = 2 * R;
-    html = openGrid(colCount, 1);
+    // GTV unified detection: ROI 1 column, cell 안에 3 micro select (T, M, H)
+    // grid-template-columns: rowhead + R × wide_cell + comment
+    let cols = `${ROWHEAD_W}px`;
+    for (let i = 0; i < R; i++) cols += ` minmax(180px, 220px)`;
+    cols += ` minmax(${COMMENT_W}px, ${COMMENT_MAX}px)`;
+    html = `<div class="g" style="grid-template-columns:${cols}">`;
     html += `<div class="c h rh">PatientID</div>`;
     state.rois.forEach(roi => {
-      html += `<div class="c h" title="${esc(roi)} 실제 (Truth)"><span class="c-roi">${esc(roi)}</span><span class="c-sub">실제</span></div>`;
-      html += `<div class="c h" title="${esc(roi)} 추론 (Pred)"><span class="c-roi">${esc(roi)}</span><span class="c-sub">추론</span></div>`;
+      html += `<div class="c h" title="${esc(roi)} — Tumor / Missed / Hallucinated">${esc(roi)}<span class="c-sub-tiny">T · Miss · Hallu</span></div>`;
     });
     html += `<div class="c h cm">Comment</div>`;
 
+    const bins = COUNT_BINS;
     state.validations.forEach((v, vi) => {
       html += `<div class="c rh">${esc(v)}</div>`;
       state.rois.forEach((roi, ri) => {
-        const truthY = !getCell(state.truthAbsent, vi, ri); // 기본 있음
-        const predY  = !!getCell(state.predPresent, vi, ri); // 기본 없음
-        const st = getCompState4(vi, ri);
+        const d = getDetection(vi, ri) || {};
+        const t = d.tumorPresent || 'Y';
+        const m = d.missed || 'none';
+        const h = d.hallucinated || 'none';
+        const st = deriveDetectionState(d);
         const cls = st === 'TP' ? 'comp-tp' : st === 'FN' ? 'comp-fn' : st === 'FP' ? 'comp-fp' : 'comp-tn';
-        html += `<div class="c ${cls}" title="${st}"><input type="checkbox" data-vi="${vi}" data-ri="${ri}" data-field="truth" class="comp-tp-chk" ${truthY ? 'checked' : ''} /></div>`;
-        html += `<div class="c ${cls}" title="${st}"><input type="checkbox" data-vi="${vi}" data-ri="${ri}" data-field="pred"  class="comp-tp-chk" ${predY ? 'checked' : ''} /></div>`;
+        const mOpts = bins.map(b => `<option value="${b}" ${m === b ? 'selected' : ''}>${COUNT_BIN_LABEL[b]}</option>`).join('');
+        const hOpts = bins.map(b => `<option value="${b}" ${h === b ? 'selected' : ''}>${COUNT_BIN_LABEL[b]}</option>`).join('');
+        html += `<div class="c det-cell ${cls}" title="${st}${m !== 'none' ? ` · Missed ${COUNT_BIN_LABEL[m]}` : ''}${h !== 'none' ? ` · Hallu ${COUNT_BIN_LABEL[h]}` : ''}">
+          <select class="det-input det-t" data-vi="${vi}" data-ri="${ri}" data-field="tumorPresent" title="Tumor present in reference?">
+            <option value="Y" ${t === 'Y' ? 'selected' : ''}>Y</option>
+            <option value="N" ${t === 'N' ? 'selected' : ''}>N</option>
+          </select>
+          <select class="det-input det-m ${m === 'none' ? '' : 'det-warn'}" data-vi="${vi}" data-ri="${ri}" data-field="missed" title="Missed lesion(s)">${mOpts}</select>
+          <select class="det-input det-h ${h === 'none' ? '' : 'det-warn'}" data-vi="${vi}" data-ri="${ri}" data-field="hallucinated" title="Hallucinated/spurious">${hOpts}</select>
+        </div>`;
       });
       html += `<div class="c cm"><input type="text" data-vi="${vi}" class="comp-comment" value="${esc(state.completenessComment[vi] || '')}" /></div>`;
     });
 
-    // Stats: TP/FN/FP/TN, 각 ROI는 2 컬럼 span
+    // Stats: 4-state count (per-ROI)
     GTV_COMPLETENESS_STATES.forEach(st => {
       html += `<div class="c rh stat">${st}</div>`;
       state.rois.forEach((_, ri) => {
         let n = 0; for (let vi = 0; vi < V; vi++) if (getCompState4(vi, ri) === st) n++;
         const cls = st === 'FN' ? 'fail' : st === 'TP' ? 'pass' : '';
-        html += `<div class="c stat ${cls}" style="grid-column: span 2;">${n}</div>`;
+        html += `<div class="c stat ${cls}">${n}</div>`;
       });
       html += `<div class="c stat cm"></div>`;
     });
@@ -1369,9 +1474,22 @@ function renderCompletenessGrid() {
         if (s === 'TP') tp++; else if (s === 'FN') fn++;
       }
       const denom = tp + fn;
-      html += `<div class="c stat" style="grid-column: span 2;">${denom ? ((fn/denom)*100).toFixed(0)+'%' : '-'}</div>`;
+      html += `<div class="c stat">${denom ? ((fn/denom)*100).toFixed(0)+'%' : '-'}</div>`;
     });
-    html += `<div class="c stat cm"></div></div>`;
+    html += `<div class="c stat cm"></div>`;
+    // Missed/Hallucinated bin 분포 합계 (Sprint 2-C 일부)
+    ['missed', 'hallucinated'].forEach(key => {
+      html += `<div class="c rh stat" style="font-size:10px;">${key === 'missed' ? 'Missed' : 'Hallu'} bins</div>`;
+      state.rois.forEach((_, ri) => {
+        const tally = { none: 0, few: 0, several: 0, many: 0 };
+        for (let vi = 0; vi < V; vi++) tally[getDetectionBin(vi, ri, key)]++;
+        const nonNone = tally.few + tally.several + tally.many;
+        const text = nonNone === 0 ? '·' : `${tally.few}+${tally.several}+${tally.many}`;
+        html += `<div class="c stat" style="font-size:10.5px;" title="None ${tally.none} · Few ${tally.few} · Several ${tally.several} · Many ${tally.many}">${text}</div>`;
+      });
+      html += `<div class="c stat cm"></div>`;
+    });
+    html += `</div>`;
   } else {
     // OAR mode (기존)
     html = openGrid(R, 1);
@@ -1407,18 +1525,14 @@ function renderCompletenessGrid() {
       saveState(); renderCompletenessGrid(); renderUsabilityGrid(); renderSummaryView(); renderSpecsGrid();
     };
   });
-  // GTV 실제/추론 체크박스
-  c.querySelectorAll('.comp-tp-chk').forEach(chk => {
-    chk.onchange = (e) => {
-      const vi = +e.target.dataset.vi, ri = +e.target.dataset.ri, fld = e.target.dataset.field;
-      if (fld === 'truth') {
-        // 체크된 상태 = 실제 있음 = truthAbsent OFF
-        setCell(state.truthAbsent, vi, ri, !e.target.checked);
-      } else {
-        // 체크된 상태 = 추론 있음 = predPresent ON
-        setCell(state.predPresent, vi, ri, e.target.checked);
-      }
-      saveState(); renderCompletenessGrid(); renderUsabilityGrid(); renderSummaryView(); renderSpecsGrid();
+  // GTV unified detection (v3): 3-input select per cell
+  c.querySelectorAll('.det-input').forEach(sel => {
+    sel.onchange = (e) => {
+      const vi = +e.target.dataset.vi, ri = +e.target.dataset.ri, field = e.target.dataset.field;
+      setDetection(vi, ri, field, e.target.value);
+      saveState();
+      renderCompletenessGrid();
+      renderUsabilityGrid(); renderSummaryView(); renderSpecsGrid();
     };
   });
   c.querySelectorAll('.comp-comment').forEach(inp => { inp.oninput = (e) => { state.completenessComment[+e.target.dataset.vi] = e.target.value; saveState(); }; });
@@ -1863,28 +1977,56 @@ function buildWorkbook() {
   }
 
   const gtvX = isGtvMode();
-  // Sheet 1: Completeness — OAR (blank/-) vs GTV (derived TP/FN/FP/TN)
+  // Sheet 1: Completeness — OAR (blank/-) vs GTV (state + bin notation)
+  function gtvCellLabel(vi, ri) {
+    const st = getCompState4(vi, ri);
+    const d = getDetection(vi, ri) || {};
+    const m = d.missed || 'none';
+    const h = d.hallucinated || 'none';
+    const annots = [];
+    if (m !== 'none') annots.push(`M:${COUNT_BIN_LABEL[m]}`);
+    if (h !== 'none') annots.push(`H:${COUNT_BIN_LABEL[h]}`);
+    return annots.length ? `${st} (${annots.join(', ')})` : st;
+  }
   makeDataSheet('1. ROI Completeness', state.validations, state.completeness, state.completenessComment,
     (ws, ref, vi, ri) => {
-      if (gtvX) setC(ws, ref, getCompState4(vi, ri));
+      if (gtvX) setC(ws, ref, gtvCellLabel(vi, ri));
       else { if (!getCell(state.completeness, vi, ri)) setC(ws, ref, '-'); }
     },
     (ws, sr) => {
       if (gtvX) {
-        // GTV: TP/FN/FP/TN count rows + miss rate
+        // GTV: TP/FN/FP/TN count rows + miss rate + missed/hallucinated bin sums
+        // 셀 값이 "TP" 또는 "FN (M:1-2)" 같은 형태라 wildcard로 COUNTIF
         GTV_COMPLETENESS_STATES.forEach((st, i) => {
           setC(ws, `A${sr+i}`, st, { rowHeader: true });
           state.rois.forEach((_, ri) => {
             const c = colLetter(ri+2);
-            setC(ws, `${c}${sr+i}`, '__formula__', { formula: `COUNTIF(${c}2:${c}${V+1},"${st}")`, type: 'n', rowHeader: true });
+            setC(ws, `${c}${sr+i}`, '__formula__', { formula: `COUNTIF(${c}2:${c}${V+1},"${st}*")`, type: 'n', rowHeader: true });
           });
         });
-        // Miss rate = FN/(TP+FN)
         const mr = sr + GTV_COMPLETENESS_STATES.length;
         setC(ws, `A${mr}`, 'Miss rate (FN/(TP+FN))', { rowHeader: true });
         state.rois.forEach((_, ri) => {
           const c = colLetter(ri+2);
-          setC(ws, `${c}${mr}`, '__formula__', { formula: `IFERROR(COUNTIF(${c}2:${c}${V+1},"FN")/(COUNTIF(${c}2:${c}${V+1},"TP")+COUNTIF(${c}2:${c}${V+1},"FN")),"")`, type: 'n', rowHeader: true });
+          setC(ws, `${c}${mr}`, '__formula__', { formula: `IFERROR(COUNTIF(${c}2:${c}${V+1},"FN*")/(COUNTIF(${c}2:${c}${V+1},"TP*")+COUNTIF(${c}2:${c}${V+1},"FN*")),"")`, type: 'n', rowHeader: true });
+        });
+        // bin distribution (text 한 줄: "Few X / Several Y / Many Z")
+        const missedRow = sr + GTV_COMPLETENESS_STATES.length + 1;
+        const halluRow  = sr + GTV_COMPLETENESS_STATES.length + 2;
+        setC(ws, `A${missedRow}`, 'Missed bins', { rowHeader: true });
+        setC(ws, `A${halluRow}`,  'Hallucinated bins', { rowHeader: true });
+        state.rois.forEach((_, ri) => {
+          const c = colLetter(ri+2);
+          ['missed', 'hallucinated'].forEach((key, idx) => {
+            const row = idx === 0 ? missedRow : halluRow;
+            const tally = { few: 0, several: 0, many: 0 };
+            for (let vi = 0; vi < V; vi++) {
+              const v = getDetectionBin(vi, ri, key);
+              if (v in tally) tally[v]++;
+            }
+            const text = (tally.few + tally.several + tally.many) === 0 ? '-' : `Few ${tally.few} · Several ${tally.several} · Many ${tally.many}`;
+            setC(ws, `${c}${row}`, text, { rowHeader: true });
+          });
         });
       } else {
         setC(ws, `A${sr}`, 'Count (missing)', { rowHeader: true }); setC(ws, `A${sr+1}`, 'Completeness', { rowHeader: true });
@@ -2011,7 +2153,15 @@ function generateMdCompleteness() {
   const rows = state.validations.map((v, vi) => [
     v,
     ...state.rois.map((_, ri) => {
-      if (gtv) return getCompState4(vi, ri);
+      if (gtv) {
+        const st = getCompState4(vi, ri);
+        const d = getDetection(vi, ri) || {};
+        const m = d.missed || 'none', h = d.hallucinated || 'none';
+        const tag = [];
+        if (m !== 'none') tag.push(`M:${COUNT_BIN_LABEL[m]}`);
+        if (h !== 'none') tag.push(`H:${COUNT_BIN_LABEL[h]}`);
+        return tag.length ? `${st} (${tag.join(', ')})` : st;
+      }
       const c = getCell(state.completeness, vi, ri);
       return c ? '' : '-';
     }),
@@ -2034,6 +2184,19 @@ function generateMdCompleteness() {
       return (tp+fn) ? (fn/(tp+fn)*100).toFixed(0)+'%' : '-';
     });
     rows.push(['**Miss rate**', ...missRates, '']);
+    // Bin distribution rows
+    ['missed', 'hallucinated'].forEach(key => {
+      const label = key === 'missed' ? '**Missed bins**' : '**Hallu bins**';
+      const cells = state.rois.map((_, ri) => {
+        const tally = { few: 0, several: 0, many: 0 };
+        for (let vi = 0; vi < V; vi++) {
+          const b = getDetectionBin(vi, ri, key);
+          if (b in tally) tally[b]++;
+        }
+        return (tally.few + tally.several + tally.many) === 0 ? '-' : `${tally.few}/${tally.several}/${tally.many}`;
+      });
+      rows.push([label, ...cells, key === 'missed' ? '(1-2 / 3-5 / >5)' : '(1-2 / 3-5 / >5)']);
+    });
   } else {
     const missCounts = state.rois.map((_, ri) => {
       let miss = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri)) miss++;

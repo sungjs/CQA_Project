@@ -798,14 +798,45 @@ body.sidebar-collapsed #appMain { margin-left: 0; }
   cursor: pointer; color: inherit;
 }
 .g > .c .comp-sel:focus { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--r-xs); }
-/* 2-column completeness header */
+
+/* Header sub-label */
 .g > .c.h .c-roi { display: block; font-size: 11px; line-height: 1.2; }
 .g > .c.h .c-sub {
-  display: block; font-size: 9.5px;
-  color: var(--text-faint); font-weight: 500;
+  display: block; font-size: 9.5px; color: var(--text-faint); font-weight: 500;
   text-transform: none; letter-spacing: 0;
 }
-.g > .c .comp-tp-chk { accent-color: var(--accent); }
+.g > .c.h .c-sub-tiny {
+  display: block; font-size: 9px; color: var(--text-faint); font-weight: 400;
+  text-transform: none; letter-spacing: 0;
+  margin-top: 1px;
+}
+
+/* GTV unified detection cell (v3) — 3 micro selects 한 줄 */
+.g > .c.det-cell {
+  display: flex; flex-direction: row;
+  gap: 4px;
+  padding: 2px 6px;
+  align-items: center; justify-content: center;
+  min-height: 36px;
+}
+.g > .c .det-input {
+  border: 1px solid transparent;
+  background: rgba(0, 0, 0, 0.04);
+  color: inherit;
+  font: inherit; font-size: 11px; font-weight: 500;
+  padding: 1px 4px;
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  min-width: 0;
+  text-align: center;
+  flex: 1 1 0;
+  max-width: 60px;
+}
+:root[data-theme="dark"] .g > .c .det-input { background: rgba(255, 255, 255, 0.06); }
+.g > .c .det-input.det-t { max-width: 40px; font-weight: 700; }
+.g > .c .det-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.g > .c .det-input.det-warn { font-weight: 700; background: rgba(220, 38, 38, 0.16); color: var(--danger-text); }
+:root[data-theme="dark"] .g > .c .det-input.det-warn { background: rgba(248, 81, 73, 0.20); color: var(--danger-text); }
 
 /* ================================================================
  * GTV SUMMARY BOX (Summary 하단)

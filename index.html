@@ -119,6 +119,11 @@
         <b>② 임계 점수(N) 이하로 받은 환자 비율이 X% 이하</b>.
         예: Type A는 <i>"평균 4점 이상 + 3점 이하 받은 환자가 10% 이하"</i>일 때 PASS.
       </p>
+      <p id="cutoffGtvHint" class="text-xs hidden mb-3 leading-relaxed" style="color: var(--warning-text); background: var(--warning-soft); padding: 8px 12px; border-radius: var(--r-sm); border-left: 3px solid var(--warning)">
+        💡 <b>GTV 권장</b>: marginal miss (FN) 임상 위험이 over-contour (FP)보다 큽니다.
+        Detection rate가 낮은 모델은 Type A(엄격)에서 자동 fail되도록 평균 점수 기준을 보수적으로 잡는 것을 권장합니다.
+        구조적인 sensitivity/FP rate cutoff은 향후 추가 예정.
+      </p>
       <table class="text-sm w-full">
         <thead>
           <tr class="text-slate-500 text-xs">
