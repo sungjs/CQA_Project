@@ -1019,6 +1019,16 @@ body.read-only #appMain textarea {
   color: var(--text-subtle) !important;
   cursor: not-allowed;
 }
+/* 그리드 셀 안의 input은 transparent 유지 — 셀의 score 색상(score-low/mid)이나
+   4-state 배경(comp-tp/fn/fp/tn)이 그대로 보이도록 */
+body.read-only #appMain .g > .c input[type="text"],
+body.read-only #appMain .g > .c input[type="number"],
+body.read-only #appMain .g > .c input[type="checkbox"],
+body.read-only #appMain .g > .c select.comp-sel,
+body.read-only #appMain .g > .c .det-input {
+  background: transparent !important;
+  color: var(--text-default) !important;
+}
 body.read-only #appMain .chip button { display: none; }
 body.read-only #appMain form button { pointer-events: none; opacity: 0.5; cursor: not-allowed; }
 body.read-only #btnDownload,
