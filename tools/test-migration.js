@@ -83,12 +83,18 @@ function migrateGtvDetectionV3(review) {
   return { ...review, detection };
 }
 
-// ===== Detection state derive (Sprint 2) =====
+// ===== Detection state derive (Sprint 2 + Sprint 4 negative case context) =====
 const DETECTION_DEFAULTS = Object.freeze({ tumorPresent: 'Y', missed: 'none', hallucinated: 'none' });
-function deriveDetectionState(detection) {
-  const tumor = detection?.tumorPresent || DETECTION_DEFAULTS.tumorPresent;
-  const missed = detection?.missed || DETECTION_DEFAULTS.missed;
-  const hallucinated = detection?.hallucinated || DETECTION_DEFAULTS.hallucinated;
+
+function getDetectionDefault(field, ctx) {
+  if (field === 'tumorPresent' && ctx && ctx.isNegativeCaseProject) return 'N';
+  return DETECTION_DEFAULTS[field];
+}
+function deriveDetectionState(detection, ctx) {
+  const d = detection || {};
+  const tumor = d.tumorPresent || getDetectionDefault('tumorPresent', ctx);
+  const missed = d.missed || getDetectionDefault('missed', ctx);
+  const hallucinated = d.hallucinated || getDetectionDefault('hallucinated', ctx);
   if (tumor === 'N') return hallucinated === 'none' ? 'TN' : 'FP';
   return missed === 'none' ? 'TP' : 'FN';
 }
@@ -186,5 +192,25 @@ eq(deriveDetectionState({ missed: 'many' }), 'FN', 'derive: missed many → FN')
 // 만약 missed=none + hallucinated=few인 경우 (tumor 있고 다 잡고 spurious만 추가) → 4-state는?
 // Plan §1.3 표: Y / none / * → TP. 즉 missed=none이면 hallucinated 무관 TP.
 eq(deriveDetectionState({ missed: 'none', hallucinated: 'few' }), 'TP', 'derive: tumor present + caught all + spurious → TP (with hallucinated info)');
+
+console.log('\n=== Sprint 4: Negative case project default ===\n');
+
+// Negative project context: 빈 detection → TN (tumor 'N' default)
+const negCtx = { isNegativeCaseProject: true };
+eq(deriveDetectionState({}, negCtx), 'TN', 'negative ctx: empty → TN (tumor=N default)');
+eq(deriveDetectionState(undefined, negCtx), 'TN', 'negative ctx: undefined → TN');
+
+// Negative project + 명시 hallucinated → FP (spurious contour)
+eq(deriveDetectionState({ hallucinated: 'few' }, negCtx), 'FP', 'negative ctx + hallucinated → FP');
+eq(deriveDetectionState({ hallucinated: 'many' }, negCtx), 'FP', 'negative ctx + many hallucinated → FP');
+
+// Negative project + tumorPresent 'Y' 명시 (예외적으로 한 환자에 tumor 있다는 표시) → 일반 로직
+eq(deriveDetectionState({ tumorPresent: 'Y' }, negCtx), 'TP', 'negative ctx + explicit Y → TP');
+eq(deriveDetectionState({ tumorPresent: 'Y', missed: 'few' }, negCtx), 'FN', 'negative ctx + explicit Y + missed → FN');
+
+// Normal project context: 동일 입력 → TP/FN/FP/TN
+const normalCtx = { isNegativeCaseProject: false };
+eq(deriveDetectionState({}, normalCtx), 'TP', 'normal ctx: empty → TP');
+eq(deriveDetectionState({}, undefined), 'TP', 'no ctx: empty → TP (DETECTION_DEFAULTS)');
 
 console.log(`\n=== Result: ${pass} passed, ${fail} failed ===`);

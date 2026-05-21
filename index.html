@@ -187,6 +187,47 @@
     </div>
   </div>
 
+  <!-- Project metadata (modality / stage / version / negative flag) -->
+  <div id="projectMetaCard" class="card mb-2 collapsible collapsed">
+    <div class="card-hd" onclick="toggleCard(this)">
+      <h3>📐 모델 메타데이터 <span id="projectMetaStatus"></span></h3>
+      <div class="flex items-center gap-2">
+        <span class="card-hint">modality · 평가 stage · model version · negative case 여부</span>
+        <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
+      </div>
+    </div>
+    <div class="card-bd">
+      <p class="text-xs text-slate-500 mb-3">정보용 메타데이터. 평가 로직에는 영향 없음 (단, "Negative case set" 토글은 detection default를 변경).</p>
+      <div class="grid grid-cols-2 gap-4">
+        <label class="text-sm">
+          <span class="block font-medium mb-1 text-slate-700">Imaging modality</span>
+          <input id="metaModality" class="plain w-full" placeholder="예: CT, MR, PET-CT, multimodal" />
+        </label>
+        <label class="text-sm">
+          <span class="block font-medium mb-1 text-slate-700">Modality detail (선택)</span>
+          <input id="metaModalityDetail" class="plain w-full" placeholder="예: T1c + FLAIR, Multi-phase CT" />
+        </label>
+        <label class="text-sm">
+          <span class="block font-medium mb-1 text-slate-700">Evaluation stage</span>
+          <input id="metaStage" class="plain w-full" placeholder="예: baseline, training_cycle_3, pre_release, post_deployment" />
+        </label>
+        <label class="text-sm">
+          <span class="block font-medium mb-1 text-slate-700">Model version</span>
+          <input id="metaModelVersion" class="plain w-full" placeholder="예: v0.3.1, checkpoint_2026_05_15" />
+        </label>
+      </div>
+      <div class="mt-4 pt-3 border-t border-slate-100">
+        <label class="text-sm flex items-start gap-2 cursor-pointer">
+          <input type="checkbox" id="metaIsNegative" class="mt-0.5" />
+          <span>
+            <b>Negative case set</b> <span class="card-hint">(Pillar 3 — 종양이 없어야 하는 환자 모음)</span>
+            <span class="block text-xs text-slate-500 mt-0.5">활성화하면 detection 셀의 default가 <code>tumorPresent: 'N'</code>이 됩니다. 빈 셀은 TN으로 해석.</span>
+          </span>
+        </label>
+      </div>
+    </div>
+  </div>
+
   <!-- Sub-metric 라벨 편집 (모델 owner 전용, collapsible) -->
   <div id="subMetricCard" class="card mb-2 collapsible collapsed">
     <div class="card-hd" onclick="toggleCard(this)">

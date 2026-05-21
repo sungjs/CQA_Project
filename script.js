@@ -42,12 +42,21 @@ function isGtvMode() { return state.indicationCategory === 'GTV'; }
 function getDetection(vi, ri) {
   return state.detection?.[vi]?.[ri] || null;
 }
+// Project context에 따라 default 동적: negative case project는 tumorPresent default = 'N'
+function getDetectionDefault(field, ctx) {
+  // ctx: { isNegativeCaseProject?: boolean } — 명시 안 하면 state 참조
+  if (field === 'tumorPresent') {
+    const neg = ctx ? !!ctx.isNegativeCaseProject : !!state.isNegativeCaseProject;
+    return neg ? 'N' : DETECTION_DEFAULTS.tumorPresent;
+  }
+  return DETECTION_DEFAULTS[field];
+}
 // 4-state 파생 (V3): detection {tumorPresent, missed, hallucinated} → 'TP'|'FN'|'FP'|'TN'
-function deriveDetectionState(detection) {
+function deriveDetectionState(detection, ctx) {
   const d = detection || {};
-  const tumor = d.tumorPresent || DETECTION_DEFAULTS.tumorPresent;
-  const missed = d.missed || DETECTION_DEFAULTS.missed;
-  const hallucinated = d.hallucinated || DETECTION_DEFAULTS.hallucinated;
+  const tumor = d.tumorPresent || getDetectionDefault('tumorPresent', ctx);
+  const missed = d.missed || getDetectionDefault('missed', ctx);
+  const hallucinated = d.hallucinated || getDetectionDefault('hallucinated', ctx);
   if (tumor === 'N') return hallucinated === 'none' ? 'TN' : 'FP';
   return missed === 'none' ? 'TP' : 'FN';
 }
@@ -58,12 +67,12 @@ function getCompState4(vi, ri) {
 // missed/hallucinated bin 분포 집계 (Summary용)
 function getDetectionBin(vi, ri, key) {
   const d = getDetection(vi, ri);
-  return (d && d[key]) || DETECTION_DEFAULTS[key];
+  return (d && d[key]) || getDetectionDefault(key);
 }
 // detection 셀에 field 변경 적용 (default 값이면 entry 정리 — sparse 유지)
 function setDetection(vi, ri, field, value) {
   if (!state.detection) state.detection = {};
-  const isDefault = value === DETECTION_DEFAULTS[field];
+  const isDefault = value === getDetectionDefault(field);
   if (isDefault) {
     if (state.detection[vi] && state.detection[vi][ri]) {
       delete state.detection[vi][ri][field];
@@ -199,7 +208,14 @@ function defaultState() {
     notionLink: '',
     // Indication framework (Phase 1+)
     indicationCategory: 'OAR',   // 'OAR' | 'GTV'
-    gtvSubtype: null,            // null | 'GBM' | 'Cervix' | 'LiverMets'
+    gtvSubtype: null,            // null | 'GBM' | 'Cervix' | 'LiverMets' (deprecated)
+    // Sprint 3 — Project metadata (informational, branching logic 아님)
+    modality: '',                // 자유 입력: 'CT', 'MR', 'PET-CT', 'multimodal' 등
+    modalityDetail: '',          // e.g., 'T1c + FLAIR', 'Multi-phase CT'
+    evaluationStage: '',         // 자유 입력: 'baseline', 'training_cycle_3', 'pre_release', 'post_deployment'
+    modelVersion: '',            // e.g., 'v0.3.1', 'checkpoint_2026_05_15'
+    // Sprint 4 — Negative case project (Pillar 3)
+    isNegativeCaseProject: false,
     cutoffDefs: {
       A: { avg: 4.0, rScore: 3, ratio: 10 },
       B: { avg: 3.5, rScore: 2, ratio: 20 },
@@ -285,6 +301,11 @@ function projectConfigFromState() {
     indicationCategory: state.indicationCategory || 'OAR',
     gtvSubtype: state.gtvSubtype || null,
     subMetricLabels: Array.isArray(state.subMetricLabels) ? state.subMetricLabels : null,
+    modality:        state.modality || '',
+    modalityDetail:  state.modalityDetail || '',
+    evaluationStage: state.evaluationStage || '',
+    modelVersion:    state.modelVersion || '',
+    isNegativeCaseProject: !!state.isNegativeCaseProject,
     cutoffDefs: state.cutoffDefs,
     rois: state.rois, roiCutoffs: state.roiCutoffs,
     validations: state.validations, tests: state.tests,
@@ -354,6 +375,11 @@ function applyProjectConfigToState(projectData) {
     state.indicationCategory = projectData.indicationCategory || 'OAR';
     state.gtvSubtype        = projectData.gtvSubtype || null;
     state.subMetricLabels   = Array.isArray(projectData.subMetricLabels) ? projectData.subMetricLabels : null;
+    state.modality          = projectData.modality || '';
+    state.modalityDetail    = projectData.modalityDetail || '';
+    state.evaluationStage   = projectData.evaluationStage || '';
+    state.modelVersion      = projectData.modelVersion || '';
+    state.isNegativeCaseProject = !!projectData.isNegativeCaseProject;
     state.cutoffDefs        = projectData.cutoffDefs || def.cutoffDefs;
     state.rois              = projectData.rois || [];
     state.roiCutoffs        = projectData.roiCutoffs || state.rois.map(() => 'A');
@@ -534,6 +560,11 @@ function applyLegacyEvaluationToState(data) {
     state.indicationCategory = data.indicationCategory || 'OAR'; // legacy는 OAR로 가정
     state.gtvSubtype        = data.gtvSubtype || null;
     state.subMetricLabels   = Array.isArray(data.subMetricLabels) ? data.subMetricLabels : null;
+    state.modality          = data.modality || '';
+    state.modalityDetail    = data.modalityDetail || '';
+    state.evaluationStage   = data.evaluationStage || '';
+    state.modelVersion      = data.modelVersion || '';
+    state.isNegativeCaseProject = !!data.isNegativeCaseProject;
     state.cutoffDefs        = data.cutoffDefs || def.cutoffDefs;
     state.rois              = data.rois || [];
     state.roiCutoffs        = data.roiCutoffs || state.rois.map(() => 'A');
@@ -607,7 +638,14 @@ function renderProjectPicker() {
     let tag = '';
     if (p._legacy) tag = ' · <span class="legacy-tag">Legacy</span>';
     else if (p.owner !== currentUser?.uid) tag = ' · <span class="shared-tag">공유</span>';
-    nameWrap.innerHTML = `<span class="project-name">${esc(p.name || p.id)}</span><span class="project-meta">${time}${tag}</span>`;
+    // Metadata badges (modality, stage, negative)
+    const badges = [];
+    if (p.isNegativeCaseProject) badges.push('<span class="meta-badge meta-badge-neg" title="Negative case set">🚫 neg</span>');
+    if (p.modality) badges.push(`<span class="meta-badge" title="Modality">${esc(p.modality)}</span>`);
+    if (p.evaluationStage) badges.push(`<span class="meta-badge" title="Stage">${esc(p.evaluationStage)}</span>`);
+    if (p.modelVersion) badges.push(`<span class="meta-badge" title="Model version">${esc(p.modelVersion)}</span>`);
+    const badgesHtml = badges.length ? `<div class="model-badges">${badges.join('')}</div>` : '';
+    nameWrap.innerHTML = `<span class="project-name">${esc(p.name || p.id)}</span><span class="project-meta">${time}${tag}</span>${badgesHtml}`;
     nameWrap.onclick = () => {
       if (p._legacy) {
         if (p.id !== currentProjectId) loadProjectFromCloud(p.id);
@@ -1379,6 +1417,31 @@ function setupAddForms() {
     });
   });
   el('btnResetSubMetric').onclick = resetSubMetricLabels;
+
+  // Project metadata fields (Sprint 3)
+  el('metaModality').addEventListener('input', (e) => { state.modality = e.target.value; saveState(); renderProjectMetadata(); renderProjectPicker(); });
+  el('metaModalityDetail').addEventListener('input', (e) => { state.modalityDetail = e.target.value; saveState(); });
+  el('metaStage').addEventListener('input', (e) => { state.evaluationStage = e.target.value; saveState(); renderProjectMetadata(); renderProjectPicker(); });
+  el('metaModelVersion').addEventListener('input', (e) => { state.modelVersion = e.target.value; saveState(); renderProjectMetadata(); renderProjectPicker(); });
+  // Negative project toggle — 데이터 있을 때 confirm
+  el('metaIsNegative').addEventListener('change', (e) => {
+    const newVal = e.target.checked;
+    const oldVal = !!state.isNegativeCaseProject;
+    if (newVal === oldVal) return;
+    const hasData = state.detection && Object.keys(state.detection).length > 0;
+    if (hasData && !confirm(
+      `Negative case 토글: 모든 빈 detection 셀의 의미가 바뀝니다.\n\n` +
+      `현재: 빈 셀 = ${oldVal ? 'TN (tumor 없음, AI도 추론 안 함)' : 'TP (tumor 있고 AI 잡음)'}\n` +
+      `변경 후: 빈 셀 = ${newVal ? 'TN' : 'TP'}\n\n` +
+      `명시적으로 입력된 셀은 그대로 보존됩니다. 계속하시겠습니까?`
+    )) {
+      e.target.checked = oldVal;
+      return;
+    }
+    state.isNegativeCaseProject = newVal;
+    saveState();
+    renderAll();
+  });
 }
 
 // 카드 접기/펼치기 (cutoff, ROI/Val/Test) — inline onclick="toggleCard(this)"에서 호출
@@ -1759,14 +1822,30 @@ function renderSummaryView() {
     let totalFn = 0, totalFp = 0, totalTp = 0, totalTn = 0;
     cp.forEach(s => { totalFn += s.fn; totalFp += s.fp; totalTp += s.tp; totalTn += s.tn; });
     const overallMiss = (totalTp + totalFn) ? (totalFn / (totalTp + totalFn) * 100).toFixed(1) : '-';
-    html += `<div class="gtv-summary-box">
-      <div class="gtv-summary-title">GTV 전체 지표</div>
+    // Negative case project: 전체 N case 중 FP 비율 (specificity 보완 지표)
+    const totalN = totalFp + totalTn;
+    const fpRate = totalN ? (totalFp / totalN * 100).toFixed(1) : '-';
+    const isNeg = !!state.isNegativeCaseProject;
+
+    let primaryChip, secondaryChip;
+    if (isNeg) {
+      // Negative project: FP rate가 primary, Miss rate는 secondary (N/A often)
+      primaryChip = `<span class="stat-chip stat-miss stat-emphasis"><span class="stat-label">FP rate</span><span class="stat-val">${fpRate}%</span></span>`;
+      secondaryChip = `<span class="stat-chip stat-miss"><span class="stat-label">Miss rate</span><span class="stat-val">${overallMiss}%</span></span>`;
+    } else {
+      primaryChip = `<span class="stat-chip stat-miss stat-emphasis"><span class="stat-label">Miss rate</span><span class="stat-val">${overallMiss}%</span></span>`;
+      secondaryChip = totalN ? `<span class="stat-chip"><span class="stat-label">FP rate</span><span class="stat-val">${fpRate}%</span></span>` : '';
+    }
+
+    html += `<div class="gtv-summary-box${isNeg ? ' negative-mode' : ''}">
+      <div class="gtv-summary-title">${isNeg ? '🚫 Negative case GTV — Pillar 3 평가' : 'GTV 전체 지표'}</div>
       <div class="gtv-summary-stats">
         <span class="stat-chip stat-tp"><span class="stat-label">TP</span><span class="stat-val">${totalTp}</span></span>
         <span class="stat-chip stat-fn"><span class="stat-label">FN <small>missed</small></span><span class="stat-val">${totalFn}</span></span>
-        <span class="stat-chip stat-fp"><span class="stat-label">FP <small>hallucination</small></span><span class="stat-val">${totalFp}</span></span>
+        <span class="stat-chip stat-fp"><span class="stat-label">FP <small>spurious</small></span><span class="stat-val">${totalFp}</span></span>
         <span class="stat-chip stat-tn"><span class="stat-label">TN</span><span class="stat-val">${totalTn}</span></span>
-        <span class="stat-chip stat-miss"><span class="stat-label">Miss rate</span><span class="stat-val">${overallMiss}%</span></span>
+        ${secondaryChip}
+        ${primaryChip}
       </div>
     </div>`;
   }
@@ -1776,6 +1855,7 @@ function renderSummaryView() {
 
 function renderAll() {
   renderLists();
+  renderProjectMetadata();
   renderSubMetricLabels();
   renderCompletenessGrid();
   renderUsabilityGrid();
@@ -1785,6 +1865,34 @@ function renderAll() {
   // tooltip 갱신
   const anchor = el('usabilityAnchor');
   if (anchor) anchor.textContent = '1-5 anchor — ' + getUsabilityAnchor();
+}
+
+// Project metadata 카드 (modality / stage / version / negative flag) 동기화
+function renderProjectMetadata() {
+  const m = el('metaModality'); if (m) m.value = state.modality || '';
+  const md = el('metaModalityDetail'); if (md) md.value = state.modalityDetail || '';
+  const s = el('metaStage'); if (s) s.value = state.evaluationStage || '';
+  const v = el('metaModelVersion'); if (v) v.value = state.modelVersion || '';
+  const n = el('metaIsNegative'); if (n) n.checked = !!state.isNegativeCaseProject;
+  // 헤더에 채워진 metadata count 표시
+  const filled = [state.modality, state.evaluationStage, state.modelVersion].filter(x => x && x.trim()).length;
+  const status = el('projectMetaStatus');
+  if (status) {
+    const parts = [];
+    if (filled > 0) parts.push(`${filled} 항목`);
+    if (state.isNegativeCaseProject) parts.push('🚫 negative');
+    status.textContent = parts.length ? `(${parts.join(' · ')})` : '';
+  }
+  // owner 외에는 readonly
+  const isOwner = (() => {
+    if (!currentUser || !currentProjectId) return true;
+    const entry = userProjects.find(p => p.id === currentProjectId);
+    return !entry || entry.owner === currentUser.uid;
+  })();
+  ['metaModality', 'metaModalityDetail', 'metaStage', 'metaModelVersion', 'metaIsNegative'].forEach(id => {
+    const elem = el(id);
+    if (elem) elem.disabled = !isOwner || currentReadOnly;
+  });
 }
 
 // Sub-metric 라벨 카드 동기화
@@ -1929,15 +2037,33 @@ function buildWorkbook() {
     setC(ws, `C${cRow+1}`, state.rois.filter((_, ri) => usStats[ri].pass === 'FAIL').join(', '), { fail: true, alignLeft: true });
     setC(ws, `B${cRow+2}`, '총평', { rowHeader: true }); setC(ws, `C${cRow+2}`, state.notionLink, { alignLeft: true });
 
+    // Project metadata (modality / stage / version / negative)
+    let mRow = cRow + 3;
+    const metaItems = [
+      ['Indication',     state.indicationCategory || 'OAR'],
+      ['Modality',       state.modality + (state.modalityDetail ? ` (${state.modalityDetail})` : '') || '-'],
+      ['Evaluation stage', state.evaluationStage || '-'],
+      ['Model version',  state.modelVersion || '-'],
+      ['Negative case set', state.isNegativeCaseProject ? 'YES (Pillar 3)' : '-'],
+    ];
+    const metaActive = metaItems.filter(([_, v]) => v && v !== '-');
+    if (metaActive.length > 0) {
+      setC(ws, `A${mRow}`, '모델 메타데이터', { header: true });
+      metaItems.forEach(([k, v], i) => {
+        setC(ws, `B${mRow + i}`, k, { rowHeader: true });
+        setC(ws, `C${mRow + i}`, v || '-', { alignLeft: true });
+      });
+      mRow += metaItems.length;
+    }
+
     // Reviewer-level note
-    let extra = 0;
+    let extra = mRow - cRow - 3;
     if (currentUser?.email || state.reviewConfidence || state.reviewerComment) {
-      extra = 1;
-      setC(ws, `A${cRow+3}`, '평가자', { header: true });
-      setC(ws, `B${cRow+3}`, 'Email', { rowHeader: true }); setC(ws, `C${cRow+3}`, currentUser?.email || '-', { alignLeft: true });
-      setC(ws, `B${cRow+4}`, '케이스 난이도', { rowHeader: true }); setC(ws, `C${cRow+4}`, state.reviewConfidence ? state.reviewConfidence + '/5' : '-', { alignLeft: true });
-      setC(ws, `B${cRow+5}`, '코멘트', { rowHeader: true }); setC(ws, `C${cRow+5}`, state.reviewerComment || '-', { alignLeft: true });
-      extra = 3;
+      setC(ws, `A${mRow}`, '평가자', { header: true });
+      setC(ws, `B${mRow}`, 'Email', { rowHeader: true }); setC(ws, `C${mRow}`, currentUser?.email || '-', { alignLeft: true });
+      setC(ws, `B${mRow+1}`, '케이스 난이도', { rowHeader: true }); setC(ws, `C${mRow+1}`, state.reviewConfidence ? state.reviewConfidence + '/5' : '-', { alignLeft: true });
+      setC(ws, `B${mRow+2}`, '코멘트', { rowHeader: true }); setC(ws, `C${mRow+2}`, state.reviewerComment || '-', { alignLeft: true });
+      extra += 3;
     }
 
     updateRange(ws, 7, cRow + 2 + extra);
