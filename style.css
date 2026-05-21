@@ -966,6 +966,31 @@ body.sidebar-collapsed #appMain { margin-left: 0; }
   color: var(--warning-text);
 }
 
+/* GTV 3-dimension cutoff breakdown table */
+.gtv-cutoff-box {
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.gtv-cutoff-title {
+  font-size: 11px; font-weight: 700; color: var(--text-muted);
+  letter-spacing: 0.06em; text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.cutoff-breakdown-table { font-size: 11.5px; }
+.cutoff-breakdown-table th { font-size: 10.5px; padding: 6px 8px; }
+.cutoff-breakdown-table td { padding: 6px 8px; }
+.cutoff-cell {
+  text-align: left;
+  font-weight: 500;
+  white-space: normal;
+  word-break: break-all;
+}
+.cutoff-cell.pass { color: var(--success); font-weight: 600; text-align: center; }
+.cutoff-cell.fail { color: var(--danger); font-size: 10.5px; }
+
 /* ================================================================
  * READ-ONLY BANNER & MODE
  * ================================================================ */

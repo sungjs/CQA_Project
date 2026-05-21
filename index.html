@@ -136,6 +136,32 @@
         </thead>
         <tbody id="cutoffBody"></tbody>
       </table>
+
+      <div id="gtvCutoffSection" class="mt-5 pt-5 border-t border-slate-100 hidden">
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="text-xs font-semibold text-slate-600" style="letter-spacing:0.05em">GTV 3-DIMENSION CUTOFF <span class="text-slate-400 font-normal">(Detection + Quality + Sub-metric AND)</span></h4>
+          <button type="button" id="btnResetGtvCutoff" class="btn-link text-xs">기본값(heuristic)으로 초기화</button>
+        </div>
+        <p class="text-xs text-slate-500 mb-3 leading-relaxed">
+          GTV PASS는 세 차원을 <b>모두</b> 통과해야 합니다 — Detection(검출률), Quality(점수, 위 표), Sub-metric(체크 비율).
+          Quality는 위에서 설정. 여기는 Detection + Sub-metric의 GTV-specific threshold입니다.
+          현재는 <b>heuristic default</b> — User study 후 refinement 예정 (Spec §8).
+        </p>
+        <table class="text-sm w-full" style="font-size:11.5px">
+          <thead>
+            <tr class="text-slate-500" style="font-size:10.5px">
+              <th class="text-left w-12">Type</th>
+              <th class="text-center" title="최소 검출률 — TP/(TP+FN)">Sens ≥</th>
+              <th class="text-center" title="최대 FP rate — FP/(FP+TN), tumor 없는 case 중">FP rate ≤</th>
+              <th class="text-center" title="missed='many' (>5) 허용 case 수">severe miss ≤</th>
+              <th class="text-center" title="Target coverage (3번 sub-metric) 체크된 ROI 비율 상한">sig miss ≤</th>
+              <th class="text-center" title="Non-target exclusion (4번 sub-metric) 체크된 ROI 비율 상한">major incl ≤</th>
+              <th class="text-center" title="Smoothness (6번 sub-metric) 체크된 ROI 비율 상한">sig artifact ≤</th>
+            </tr>
+          </thead>
+          <tbody id="gtvCutoffBody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 

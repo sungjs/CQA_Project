@@ -1,7 +1,41 @@
 //==================== STATE ====================
 const LS_KEY = 'cqa_input_tool_v2';
 const LAST_PROJECT_LS_KEY = (uid) => `cqa_last_project_${uid}`;
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
+
+// GTV pass criteria default (heuristic, user study refinement 전 starting point)
+// Spec: GTV_Pass_Criteria_Spec.md §3
+const GTV_CUTOFF_DEFAULTS = {
+  A: { // 엄격 (pre-release / production)
+    sensitivityMin: 0.95,
+    fpRateMax: 0.05,
+    severeMissAllowed: 0,
+    significantMissRateMax: 0.05,
+    majorInclusionRateMax: 0.05,
+    significantArtifactRateMax: 0.10,
+  },
+  B: { // 중간 (validation / iteration)
+    sensitivityMin: 0.90,
+    fpRateMax: 0.15,
+    severeMissAllowed: 1,
+    significantMissRateMax: 0.10,
+    majorInclusionRateMax: 0.10,
+    significantArtifactRateMax: 0.20,
+  },
+  C: { // 완화 (early training / research)
+    sensitivityMin: 0.85,
+    fpRateMax: 0.30,
+    severeMissAllowed: 2,
+    significantMissRateMax: 0.20,
+    majorInclusionRateMax: 0.20,
+    significantArtifactRateMax: 0.30,
+  },
+};
+const GTV_DIMENSION_LABELS = {
+  detection: 'Detection',
+  quality: 'Quality',
+  subMetric: 'Sub-metric',
+};
 
 // ===== Unified Detection (Schema v3, framework v3) =====
 // GTV mode: 환자×ROI별로 tumorPresent / missed / hallucinated 3-input 평가
@@ -326,6 +360,22 @@ let saveInFlight = null;
 let pendingDirty = false;
 let suppressSave = false;
 
+// cutoffDefs에 gtv sub-object가 없으면 default heuristic 채우기 (V3 → V4 lazy migration)
+function ensureGtvCutoffDefaults(cutoffDefs) {
+  if (!cutoffDefs) return;
+  ['A', 'B', 'C'].forEach(t => {
+    if (!cutoffDefs[t]) return;
+    if (!cutoffDefs[t].gtv) cutoffDefs[t].gtv = { ...GTV_CUTOFF_DEFAULTS[t] };
+    else {
+      // 일부 field가 빠진 경우 default 채움
+      const fields = Object.keys(GTV_CUTOFF_DEFAULTS[t]);
+      fields.forEach(f => {
+        if (cutoffDefs[t].gtv[f] === undefined) cutoffDefs[t].gtv[f] = GTV_CUTOFF_DEFAULTS[t][f];
+      });
+    }
+  });
+}
+
 function defaultState() {
   return {
     projectName: 'CQA_Result',
@@ -341,9 +391,9 @@ function defaultState() {
     // Sprint 4 — Negative case project (Pillar 3)
     isNegativeCaseProject: false,
     cutoffDefs: {
-      A: { avg: 4.0, rScore: 3, ratio: 10 },
-      B: { avg: 3.5, rScore: 2, ratio: 20 },
-      C: { avg: 3.0, rScore: 2, ratio: 10 }
+      A: { avg: 4.0, rScore: 3, ratio: 10, gtv: { ...GTV_CUTOFF_DEFAULTS.A } },
+      B: { avg: 3.5, rScore: 2, ratio: 20, gtv: { ...GTV_CUTOFF_DEFAULTS.B } },
+      C: { avg: 3.0, rScore: 2, ratio: 10, gtv: { ...GTV_CUTOFF_DEFAULTS.C } }
     },
     rois: ['Prostate', 'SeminalVes'],
     roiCutoffs: ['A', 'A'],
@@ -391,6 +441,7 @@ function loadState() {
     if (!parsed.roiCutoffs) parsed.roiCutoffs = parsed.rois.map(() => 'A');
     while (parsed.roiCutoffs.length < parsed.rois.length) parsed.roiCutoffs.push('A');
     parsed.roiCutoffs = parsed.roiCutoffs.slice(0, parsed.rois.length);
+    ensureGtvCutoffDefaults(parsed.cutoffDefs);
     // 모든 schema migration을 single function이 처리
     migrateReviewSchema(parsed, parsed.indicationCategory);
     return parsed;
@@ -505,6 +556,7 @@ function applyProjectConfigToState(projectData) {
     state.modelVersion      = projectData.modelVersion || '';
     state.isNegativeCaseProject = !!projectData.isNegativeCaseProject;
     state.cutoffDefs        = projectData.cutoffDefs || def.cutoffDefs;
+    ensureGtvCutoffDefaults(state.cutoffDefs);
     state.rois              = projectData.rois || [];
     state.roiCutoffs        = projectData.roiCutoffs || state.rois.map(() => 'A');
     state.validations       = projectData.validations || [];
@@ -690,6 +742,7 @@ function applyLegacyEvaluationToState(data) {
     state.modelVersion      = data.modelVersion || '';
     state.isNegativeCaseProject = !!data.isNegativeCaseProject;
     state.cutoffDefs        = data.cutoffDefs || def.cutoffDefs;
+    ensureGtvCutoffDefaults(state.cutoffDefs);
     state.rois              = data.rois || [];
     state.roiCutoffs        = data.roiCutoffs || state.rois.map(() => 'A');
     state.validations       = data.validations || [];
@@ -1383,6 +1436,7 @@ function syncCutoffHint() {
 
 function renderCutoffTable() {
   syncCutoffHint();
+  ensureGtvCutoffDefaults(state.cutoffDefs);
   const tbody = el('cutoffBody');
   let html = '';
   const typeDesc = { A: '엄격 (고성능 요구)', B: '중간', C: '완화' };
@@ -1410,6 +1464,76 @@ function renderCutoffTable() {
       saveState(); renderCutoffTable(); renderSpecsGrid(); renderUsabilityGrid(); renderSummaryView();
     };
   });
+
+  // GTV cutoff section (3-dimension, Spec §2-§3)
+  renderGtvCutoffTable();
+}
+
+function renderGtvCutoffTable() {
+  const section = el('gtvCutoffSection');
+  const tbody = el('gtvCutoffBody');
+  if (!section || !tbody) return;
+  const gtv = isGtvMode();
+  section.classList.toggle('hidden', !gtv);
+  if (!gtv) return;
+
+  // owner-only edit
+  const isOwner = (() => {
+    if (!currentUser || !currentProjectId) return true;
+    const entry = userProjects.find(p => p.id === currentProjectId);
+    return !entry || entry.owner === currentUser.uid;
+  })();
+  const ro = !isOwner || currentReadOnly;
+
+  // GTV value field 정의 (sub-object 안의 6개 field, 모두 0-1 또는 정수)
+  const fields = [
+    { k: 'sensitivityMin',           pct: true,  step: 0.01 },
+    { k: 'fpRateMax',                pct: true,  step: 0.01 },
+    { k: 'severeMissAllowed',        pct: false, step: 1, integer: true },
+    { k: 'significantMissRateMax',   pct: true,  step: 0.01 },
+    { k: 'majorInclusionRateMax',    pct: true,  step: 0.01 },
+    { k: 'significantArtifactRateMax', pct: true, step: 0.01 },
+  ];
+
+  let html = '';
+  CUTOFF_TYPES.forEach(t => {
+    const g = state.cutoffDefs[t].gtv;
+    html += `<tr class="border-t"><td class="py-1 font-bold">${t}</td>`;
+    fields.forEach(f => {
+      const raw = g[f.k] ?? GTV_CUTOFF_DEFAULTS[t][f.k];
+      const displayVal = f.pct ? (raw * 100).toFixed(0) : raw;
+      const suffix = f.pct ? '<span class="text-slate-400" style="font-size:10px">%</span>' : '';
+      html += `<td class="py-1 text-center">
+        <input type="number" step="${f.pct ? 1 : 1}" min="0" ${f.pct ? 'max="100"' : ''}
+               class="plain cutoff-input text-center" style="width:56px"
+               data-t="${t}" data-k="${f.k}" data-pct="${f.pct}" value="${displayVal}" ${ro ? 'disabled' : ''} />
+        ${suffix}
+      </td>`;
+    });
+    html += `</tr>`;
+  });
+  tbody.innerHTML = html;
+  tbody.querySelectorAll('input').forEach(inp => {
+    inp.onchange = (e) => {
+      const t = e.target.dataset.t, k = e.target.dataset.k, pct = e.target.dataset.pct === 'true';
+      let v = parseFloat(e.target.value);
+      if (isNaN(v)) return;
+      if (pct) v = v / 100;
+      state.cutoffDefs[t].gtv[k] = v;
+      saveState();
+      renderUsabilityGrid(); renderSummaryView(); renderSpecsGrid();
+    };
+  });
+}
+
+function resetGtvCutoffsToDefault() {
+  if (!confirm('GTV cutoff 3-dimension threshold를 모두 heuristic default로 초기화할까요?')) return;
+  CUTOFF_TYPES.forEach(t => {
+    state.cutoffDefs[t].gtv = { ...GTV_CUTOFF_DEFAULTS[t] };
+  });
+  saveState();
+  renderCutoffTable(); renderUsabilityGrid(); renderSummaryView(); renderSpecsGrid();
+  toast('info', 'GTV cutoff threshold를 default로 초기화했습니다');
 }
 
 function renderROIChips() {
@@ -1540,6 +1664,8 @@ function setupAddForms() {
     });
   });
   el('btnResetSubMetric').onclick = resetSubMetricLabels;
+  const btnResetGtv = el('btnResetGtvCutoff');
+  if (btnResetGtv) btnResetGtv.onclick = resetGtvCutoffsToDefault;
 
   // Project metadata fields (Sprint 3)
   el('metaModality').addEventListener('input', (e) => { state.modality = e.target.value; saveState(); renderProjectMetadata(); renderProjectPicker(); });
@@ -1784,6 +1910,10 @@ function handleGridKeyNav(e) {
 
 function computeUsabilityStats() {
   const V = state.validations.length;
+  const gtv = isGtvMode();
+  const subRates = gtv ? computeAggregateSubMetricRates() : null;
+  // GTV mode: 한 번 미리 completeness stat을 가져옴 (sensitivity 등 계산)
+  const compStats = gtv ? computeCompletenessStats() : null;
   return state.rois.map((_, ri) => {
     const scores = [];
     for (let vi = 0; vi < V; vi++) {
@@ -1791,11 +1921,27 @@ function computeUsabilityStats() {
       const s = getCell(state.usability, vi, ri);
       if (s && !isNaN(+s)) scores.push(+s);
     }
-    if (!scores.length) return { avg: null, r2: null, r3: null, pass: null };
-    const avg = scores.reduce((a,b)=>a+b,0)/scores.length, r2 = scores.filter(x=>x<=2).length/scores.length, r3 = scores.filter(x=>x<=3).length/scores.length;
-    const def = state.cutoffDefs[state.roiCutoffs[ri] || 'A'];
-    const pass = (avg >= def.avg && (def.rScore===2?r2:r3) <= def.ratio/100) ? 'PASS' : 'FAIL';
-    return { avg, r2, r3, pass };
+    const cutoffType = state.roiCutoffs[ri] || 'A';
+    const def = state.cutoffDefs[cutoffType];
+
+    let avg = null, r2 = null, r3 = null;
+    if (scores.length) {
+      avg = scores.reduce((a,b)=>a+b,0)/scores.length;
+      r2 = scores.filter(x=>x<=2).length/scores.length;
+      r3 = scores.filter(x=>x<=3).length/scores.length;
+    }
+
+    // Pass logic — indication mode에 따라 분기
+    let pass = null, passDetail = null;
+    if (gtv) {
+      passDetail = checkGtvPass(compStats[ri], { avg, r2, r3 }, subRates, def);
+      pass = passDetail.overall ? 'PASS' : 'FAIL';
+    } else {
+      // OAR mode: 기존 로직
+      if (!scores.length) pass = null;
+      else pass = (avg >= def.avg && (def.rScore===2?r2:r3) <= def.ratio/100) ? 'PASS' : 'FAIL';
+    }
+    return { avg, r2, r3, pass, passDetail };
   });
 }
 
@@ -1804,11 +1950,16 @@ function computeCompletenessStats() {
   const gtv = isGtvMode();
   return state.rois.map((_, ri) => {
     let miss = 0, tp = 0, fn = 0, fp = 0, tn = 0;
+    let severeMissCount = 0;  // missed='many' count (only meaningful in GTV)
     for (let vi = 0; vi < V; vi++) {
       if (gtv) {
         const s = getCompState4(vi, ri);
+        const d = getDetection(vi, ri) || {};
         if (s === 'TP') tp++;
-        else if (s === 'FN') { fn++; miss++; }
+        else if (s === 'FN') {
+          fn++; miss++;
+          if (d.missed === 'many') severeMissCount++;
+        }
         else if (s === 'FP') fp++;
         else if (s === 'TN') tn++;
       } else {
@@ -1816,14 +1967,90 @@ function computeCompletenessStats() {
       }
     }
     let completeness;
+    let sensitivity = null, fpRate = null;
     if (gtv) {
-      const denom = tp + fn;
-      completeness = denom ? tp / denom : 0;
+      const denomPos = tp + fn;  // tumor present cases
+      const denomNeg = fp + tn;  // tumor absent cases
+      completeness = denomPos ? tp / denomPos : 0;
+      sensitivity = denomPos ? tp / denomPos : null;  // TP/(TP+FN)
+      fpRate = denomNeg ? fp / denomNeg : null;        // FP/(FP+TN) = 1-Specificity
     } else {
       completeness = V > 0 ? (V - miss) / V : 0;
     }
-    return { miss, total: V, completeness, tp, fn, fp, tn };
+    return { miss, total: V, completeness, tp, fn, fp, tn, sensitivity, fpRate, severeMissCount };
   });
+}
+
+// 전체 ROI 통합 sub-metric rate (체크된 ROI / 전체 ROI)
+// Spec §2 note: "초기 구현은 binary 기반 (체크된 비율 cap)으로 시작 가능"
+function computeAggregateSubMetricRates() {
+  const R = state.rois.length;
+  if (R === 0) return { significantMiss: 0, majorInclusion: 0, significantBoundary: 0, significantArtifact: 0 };
+  const counts = { 0: 0, 1: 0, 2: 0, 3: 0 };
+  for (let ri = 0; ri < R; ri++) {
+    for (let ci = 0; ci < 4; ci++) {
+      if (getCell(state.specs, ri, ci)) counts[ci]++;
+    }
+  }
+  return {
+    significantMiss:     counts[0] / R,  // ci 0 = Target coverage 체크 비율
+    majorInclusion:      counts[1] / R,  // ci 1 = Non-target exclusion
+    significantBoundary: counts[2] / R,  // ci 2 = Boundary accuracy
+    significantArtifact: counts[3] / R,  // ci 3 = Smoothness
+  };
+}
+
+// 3-dimension AND pass logic (GTV mode)
+// Returns { overall, detection, quality, subMetric }
+//   각 dimension: { pass: bool, fails: [readable reason strings] }
+function checkGtvPass(comp, us, subRates, def) {
+  const g = def?.gtv || GTV_CUTOFF_DEFAULTS.A;
+
+  // Dimension 1: Detection
+  const detFails = [];
+  if (comp.sensitivity !== null && comp.sensitivity < g.sensitivityMin) {
+    detFails.push(`Sensitivity ${(comp.sensitivity*100).toFixed(0)}% < ${(g.sensitivityMin*100).toFixed(0)}%`);
+  }
+  if (comp.fpRate !== null && comp.fpRate > g.fpRateMax) {
+    detFails.push(`FP rate ${(comp.fpRate*100).toFixed(0)}% > ${(g.fpRateMax*100).toFixed(0)}%`);
+  }
+  if (comp.severeMissCount > g.severeMissAllowed) {
+    detFails.push(`Severe miss (>5) ${comp.severeMissCount} > allowed ${g.severeMissAllowed}`);
+  }
+  const detection = { pass: detFails.length === 0, fails: detFails };
+
+  // Dimension 2: Quality
+  const qFails = [];
+  if (us.avg !== null) {
+    if (us.avg < def.avg) qFails.push(`Avg ${us.avg.toFixed(2)} < ${def.avg}`);
+    const ratioObs = def.rScore === 2 ? us.r2 : us.r3;
+    const ratioThr = def.ratio / 100;
+    if (ratioObs !== null && ratioObs > ratioThr) {
+      qFails.push(`Ratio (≤${def.rScore}점) ${(ratioObs*100).toFixed(0)}% > ${(ratioThr*100).toFixed(0)}%`);
+    }
+  } else {
+    // No scoreable cases — quality undefined. Detection dimension만 의미.
+    // GTV에서 모든 case가 FN/TN이면 usability가 없음. 그 경우 quality는 N/A로 pass 간주.
+  }
+  const quality = { pass: qFails.length === 0, fails: qFails };
+
+  // Dimension 3: Sub-metric (aggregate across all ROIs)
+  const smFails = [];
+  if (subRates.significantMiss > g.significantMissRateMax) {
+    smFails.push(`Sig miss ${(subRates.significantMiss*100).toFixed(0)}% > ${(g.significantMissRateMax*100).toFixed(0)}%`);
+  }
+  if (subRates.majorInclusion > g.majorInclusionRateMax) {
+    smFails.push(`Major incl ${(subRates.majorInclusion*100).toFixed(0)}% > ${(g.majorInclusionRateMax*100).toFixed(0)}%`);
+  }
+  if (subRates.significantArtifact > g.significantArtifactRateMax) {
+    smFails.push(`Sig artifact ${(subRates.significantArtifact*100).toFixed(0)}% > ${(g.significantArtifactRateMax*100).toFixed(0)}%`);
+  }
+  const subMetric = { pass: smFails.length === 0, fails: smFails };
+
+  return {
+    overall: detection.pass && quality.pass && subMetric.pass,
+    detection, quality, subMetric,
+  };
 }
 
 function renderVariantGrid() {
@@ -1933,6 +2160,34 @@ function renderSummaryView() {
         <span class="stat-chip stat-miss stat-emphasis"><span class="stat-label">Miss rate <small>FN/(FN+TP)</small></span><span class="stat-val">${overallMiss}%</span></span>
       </div>
     </div>`;
+
+    // 3-dimension PASS/FAIL breakdown per ROI (Spec §4, §5)
+    const anyHasDetail = us.some(u => u.passDetail);
+    if (anyHasDetail) {
+      html += `<div class="gtv-cutoff-box">
+        <div class="gtv-cutoff-title">GTV 3-Dimension Cutoff (Detection · Quality · Sub-metric — AND logic)</div>
+        <table class="summary-table cutoff-breakdown-table">
+          <thead><tr><th>ROI</th><th>Type</th><th>Overall</th><th>Detection</th><th>Quality</th><th>Sub-metric</th></tr></thead>
+          <tbody>`;
+      state.rois.forEach((roi, ri) => {
+        const detail = us[ri].passDetail; if (!detail) return;
+        const cell = (dim) => {
+          const okCls = dim.pass ? 'pass' : 'fail';
+          const txt = dim.pass ? '✓' : '✗ ' + dim.fails.join(' · ');
+          return `<td class="${okCls} cutoff-cell" title="${esc(dim.fails.join('; ') || 'pass')}">${esc(txt)}</td>`;
+        };
+        const overall = detail.overall ? 'pass' : 'fail';
+        html += `<tr>
+          <td><b>${esc(roi)}</b></td>
+          <td>${state.roiCutoffs[ri]}</td>
+          <td class="${overall}"><b>${detail.overall ? 'PASS' : 'FAIL'}</b></td>
+          ${cell(detail.detection)}${cell(detail.quality)}${cell(detail.subMetric)}
+        </tr>`;
+      });
+      html += `</tbody></table>
+      <p class="text-xs text-slate-500 mt-2">Detection: sensitivity / FP rate / severe miss · Quality: usability avg + ratio · Sub-metric: aggregate sig miss / major incl / sig artifact</p>
+      </div>`;
+    }
   }
   html += `<div class="mt-4 text-sm"><p><b>Passed list:</b> <span class="text-green-700">${esc(state.rois.filter((_,ri)=>us[ri].pass==='PASS').join(', ') || '-')}</span></p><p><b>Failed list:</b> <span class="text-red-700">${esc(state.rois.filter((_,ri)=>us[ri].pass==='FAIL').join(', ') || '-')}</span></p></div>`;
   c.innerHTML = html;
@@ -2140,7 +2395,28 @@ function buildWorkbook() {
       setC(ws, `B${mRow}`, 'Email', { rowHeader: true }); setC(ws, `C${mRow}`, currentUser?.email || '-', { alignLeft: true });
       setC(ws, `B${mRow+1}`, '케이스 난이도', { rowHeader: true }); setC(ws, `C${mRow+1}`, state.reviewConfidence ? state.reviewConfidence + '/5' : '-', { alignLeft: true });
       setC(ws, `B${mRow+2}`, '코멘트', { rowHeader: true }); setC(ws, `C${mRow+2}`, state.reviewerComment || '-', { alignLeft: true });
-      extra += 3;
+      extra += 3; mRow += 3;
+    }
+
+    // GTV 3-dimension breakdown (Sprint 6, Spec §5)
+    if (gtvX) {
+      setC(ws, `A${mRow}`, 'GTV 3-Dim Cutoff', { header: true });
+      const hdrRow = mRow + 1;
+      ['ROI', 'Type', 'Overall', 'Detection', 'Quality', 'Sub-metric'].forEach((h, i) => {
+        setC(ws, `${colLetter(i+1)}${hdrRow}`, h, { rowHeader: true });
+      });
+      for (let ri = 0; ri < R; ri++) {
+        const r = hdrRow + 1 + ri;
+        const detail = usStats[ri].passDetail;
+        if (!detail) continue;
+        setC(ws, `A${r}`, state.rois[ri]);
+        setC(ws, `B${r}`, state.roiCutoffs[ri]);
+        setC(ws, `C${r}`, detail.overall ? 'PASS' : 'FAIL', detail.overall ? { pass: true } : { fail: true });
+        setC(ws, `D${r}`, detail.detection.pass ? 'PASS' : ('FAIL: ' + detail.detection.fails.join('; ')), detail.detection.pass ? { pass: true } : { fail: true, alignLeft: true });
+        setC(ws, `E${r}`, detail.quality.pass   ? 'PASS' : ('FAIL: ' + detail.quality.fails.join('; ')),   detail.quality.pass   ? { pass: true } : { fail: true, alignLeft: true });
+        setC(ws, `F${r}`, detail.subMetric.pass ? 'PASS' : ('FAIL: ' + detail.subMetric.fails.join('; ')), detail.subMetric.pass ? { pass: true } : { fail: true, alignLeft: true });
+      }
+      extra += 1 + 1 + R;
     }
 
     updateRange(ws, 7, cRow + 2 + extra);

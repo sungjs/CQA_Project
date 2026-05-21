@@ -193,6 +193,122 @@ eq(deriveDetectionState({ missed: 'many' }), 'FN', 'derive: missed many → FN')
 // Plan §1.3 표: Y / none / * → TP. 즉 missed=none이면 hallucinated 무관 TP.
 eq(deriveDetectionState({ missed: 'none', hallucinated: 'few' }), 'TP', 'derive: tumor present + caught all + spurious → TP (with hallucinated info)');
 
+console.log('\n=== Sprint 6: GTV 3-dimension pass logic ===\n');
+
+// checkGtvPass 인라인 (script.js와 동일 구현)
+function checkGtvPass(comp, us, subRates, def) {
+  const g = def.gtv;
+  const detFails = [];
+  if (comp.sensitivity !== null && comp.sensitivity < g.sensitivityMin) {
+    detFails.push('sensitivity');
+  }
+  if (comp.fpRate !== null && comp.fpRate > g.fpRateMax) {
+    detFails.push('fpRate');
+  }
+  if (comp.severeMissCount > g.severeMissAllowed) {
+    detFails.push('severeMiss');
+  }
+  const detection = { pass: detFails.length === 0, fails: detFails };
+  const qFails = [];
+  if (us.avg !== null) {
+    if (us.avg < def.avg) qFails.push('avg');
+    const ratioObs = def.rScore === 2 ? us.r2 : us.r3;
+    const ratioThr = def.ratio / 100;
+    if (ratioObs !== null && ratioObs > ratioThr) qFails.push('ratio');
+  }
+  const quality = { pass: qFails.length === 0, fails: qFails };
+  const smFails = [];
+  if (subRates.significantMiss > g.significantMissRateMax) smFails.push('sigMiss');
+  if (subRates.majorInclusion > g.majorInclusionRateMax) smFails.push('majorIncl');
+  if (subRates.significantArtifact > g.significantArtifactRateMax) smFails.push('sigArtifact');
+  const subMetric = { pass: smFails.length === 0, fails: smFails };
+  return {
+    overall: detection.pass && quality.pass && subMetric.pass,
+    detection, quality, subMetric,
+  };
+}
+
+const TYPE_B = {
+  avg: 3.5, rScore: 2, ratio: 20,
+  gtv: {
+    sensitivityMin: 0.90, fpRateMax: 0.15, severeMissAllowed: 1,
+    significantMissRateMax: 0.10, majorInclusionRateMax: 0.10, significantArtifactRateMax: 0.20,
+  }
+};
+
+// Test 1: 완벽 — 모두 pass
+r = checkGtvPass(
+  { sensitivity: 0.95, fpRate: 0.05, severeMissCount: 0 },
+  { avg: 4.0, r2: 0.05, r3: 0.10 },
+  { significantMiss: 0.05, majorInclusion: 0.05, significantArtifact: 0.10 },
+  TYPE_B
+);
+eq(r.overall, true, '3-dim: 모두 통과 → overall PASS');
+eq(r.detection.pass, true, '3-dim: detection PASS');
+eq(r.quality.pass, true, '3-dim: quality PASS');
+eq(r.subMetric.pass, true, '3-dim: subMetric PASS');
+
+// Test 2: Detection만 fail (낮은 sensitivity)
+r = checkGtvPass(
+  { sensitivity: 0.85, fpRate: 0.05, severeMissCount: 0 },
+  { avg: 4.0, r2: 0.05, r3: 0.10 },
+  { significantMiss: 0.05, majorInclusion: 0.05, significantArtifact: 0.10 },
+  TYPE_B
+);
+eq(r.overall, false, '3-dim: detection만 fail → overall FAIL');
+eq(r.detection.pass, false, '3-dim: detection FAIL');
+eq(r.detection.fails.includes('sensitivity'), true, '3-dim: sensitivity fail reason');
+eq(r.quality.pass, true, '3-dim: detection fail이어도 quality는 PASS');
+
+// Test 3: Severe miss 1개 (allowed=1, equal OK)
+r = checkGtvPass(
+  { sensitivity: 0.92, fpRate: 0.05, severeMissCount: 1 },
+  { avg: 4.0, r2: 0.05, r3: 0.10 },
+  { significantMiss: 0.05, majorInclusion: 0.05, significantArtifact: 0.10 },
+  TYPE_B
+);
+eq(r.overall, true, '3-dim: severe miss = allowed → PASS');
+
+// Test 4: Severe miss 2개 (allowed=1, exceed)
+r = checkGtvPass(
+  { sensitivity: 0.92, fpRate: 0.05, severeMissCount: 2 },
+  { avg: 4.0, r2: 0.05, r3: 0.10 },
+  { significantMiss: 0.05, majorInclusion: 0.05, significantArtifact: 0.10 },
+  TYPE_B
+);
+eq(r.overall, false, '3-dim: severe miss > allowed → FAIL');
+eq(r.detection.fails.includes('severeMiss'), true, '3-dim: severeMiss fail reason');
+
+// Test 5: Sub-metric fail (sig miss rate 초과)
+r = checkGtvPass(
+  { sensitivity: 0.95, fpRate: 0.05, severeMissCount: 0 },
+  { avg: 4.0, r2: 0.05, r3: 0.10 },
+  { significantMiss: 0.15, majorInclusion: 0.05, significantArtifact: 0.10 },
+  TYPE_B
+);
+eq(r.overall, false, '3-dim: sub-metric만 fail → overall FAIL');
+eq(r.subMetric.pass, false, '3-dim: subMetric FAIL');
+eq(r.subMetric.fails.includes('sigMiss'), true, '3-dim: sigMiss fail reason');
+
+// Test 6: Quality avg 미달
+r = checkGtvPass(
+  { sensitivity: 0.95, fpRate: 0.05, severeMissCount: 0 },
+  { avg: 3.0, r2: 0.05, r3: 0.10 },
+  { significantMiss: 0.05, majorInclusion: 0.05, significantArtifact: 0.10 },
+  TYPE_B
+);
+eq(r.overall, false, '3-dim: avg 미달 → overall FAIL');
+eq(r.quality.fails.includes('avg'), true, '3-dim: avg fail reason');
+
+// Test 7: usability null (no scoreable cases, e.g., 모두 negative)
+r = checkGtvPass(
+  { sensitivity: null, fpRate: 0.0, severeMissCount: 0 },
+  { avg: null, r2: null, r3: null },
+  { significantMiss: 0.0, majorInclusion: 0.0, significantArtifact: 0.0 },
+  TYPE_B
+);
+eq(r.overall, true, '3-dim: no scoreable cases → 빈 fail list → PASS');
+
 console.log('\n=== Sprint 4: Negative case project default ===\n');
 
 // Negative project context: 빈 detection → TN (tumor 'N' default)
