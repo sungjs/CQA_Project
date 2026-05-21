@@ -579,6 +579,23 @@ function applyReviewToState(reviewData) {
 async function loadReviewerEvaluation(modelId, reviewerUid) {
   if (!firebaseReady || !currentUser) return false;
   if (pendingDirty) await flushCloudSave();
+
+  // 비-member에 본인 review 로드면 자동 self-join (workspace 공유 정책)
+  const entry = userProjects.find(p => p.id === modelId);
+  if (entry && !entry._isMember && reviewerUid === currentUser.uid) {
+    try {
+      await fbDb.collection('projects').doc(modelId).update({
+        members: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      entry._isMember = true;
+      logAuditEvent('join_project', modelId, { name: entry.name || '', auto: true });
+    } catch (e) {
+      console.warn('Auto self-join 실패 (read-only로 진행):', e);
+      // 실패해도 read는 가능 (workspace 정책)
+    }
+  }
+
   try {
     setSyncStatus('pending', '불러오는 중…');
     const projectRef = fbDb.collection('projects').doc(modelId);
@@ -661,13 +678,22 @@ async function createCloudProject(name, seedFromCurrentState) {
   return projectId;
 }
 
+// Workspace 전체 공유: members 필터 없이 모든 project fetch.
+// 본인 멤버 여부는 _isMember flag로 표시 (UI에서 활용).
 async function fetchUserProjects() {
   if (!firebaseReady || !currentUser) return [];
   try {
-    const snap = await fbDb.collection('projects')
-      .where('members', 'array-contains', currentUser.uid).get();
+    const snap = await fbDb.collection('projects').get();
     const list = [];
-    snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+    snap.forEach(d => {
+      const data = d.data();
+      const members = data.members || [];
+      list.push({
+        id: d.id,
+        ...data,
+        _isMember: members.includes(currentUser.uid),
+      });
+    });
     list.sort((a, b) => (b.updatedAt?.toMillis?.() || 0) - (a.updatedAt?.toMillis?.() || 0));
     return list;
   } catch (e) {
