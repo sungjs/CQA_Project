@@ -832,32 +832,83 @@ body.sidebar-collapsed #appMain { margin-left: 0; }
   margin-top: 1px;
 }
 
-/* GTV unified detection cell (v3) — 3 micro selects 한 줄 */
+/* GTV unified detection cell (v3 compact) — 4-state badge + 작은 annotation
+   클릭 시 popover editor (필요한 경우에만 missed/hallucinated 입력) */
 .g > .c.det-cell {
-  display: flex; flex-direction: row;
-  gap: 4px;
-  padding: 2px 6px;
+  display: flex; flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px;
   align-items: center; justify-content: center;
-  min-height: 36px;
-}
-.g > .c .det-input {
-  border: 1px solid transparent;
-  background: rgba(0, 0, 0, 0.04);
-  color: inherit;
-  font: inherit; font-size: 11px; font-weight: 500;
-  padding: 1px 4px;
-  border-radius: var(--r-xs);
+  min-height: 34px;
   cursor: pointer;
-  min-width: 0;
-  text-align: center;
-  flex: 1 1 0;
-  max-width: 60px;
+  user-select: none;
+  transition: filter var(--tx-fast);
 }
-:root[data-theme="dark"] .g > .c .det-input { background: rgba(255, 255, 255, 0.06); }
-.g > .c .det-input.det-t { max-width: 40px; font-weight: 700; }
-.g > .c .det-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-.g > .c .det-input.det-warn { font-weight: 700; background: rgba(220, 38, 38, 0.16); color: var(--danger-text); }
-:root[data-theme="dark"] .g > .c .det-input.det-warn { background: rgba(248, 81, 73, 0.20); color: var(--danger-text); }
+.g > .c.det-cell:hover { filter: brightness(0.96); }
+:root[data-theme="dark"] .g > .c.det-cell:hover { filter: brightness(1.12); }
+.g > .c.det-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--r-xs); }
+.g > .c.det-cell .det-state {
+  font-weight: 700; font-size: 13px; letter-spacing: 0.04em;
+  line-height: 1.1;
+}
+.g > .c.det-cell .det-annots {
+  font-size: 10px; font-weight: 600; opacity: 0.85;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+/* Popover editor — cell 클릭 시 노출 */
+.det-popover {
+  position: absolute;
+  z-index: 60;
+  width: 280px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-elevated);
+  font-size: 13px;
+  animation: det-pop-in 140ms cubic-bezier(0.2, 0, 0.2, 1);
+}
+@keyframes det-pop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.det-popover-title {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+.det-popover-patient { font-weight: 600; color: var(--text-strong); }
+.det-popover-roi { font-weight: 500; color: var(--text-default); }
+.det-popover-sep { color: var(--text-faint); }
+.det-popover-close {
+  margin-left: auto;
+  background: none; border: 0; cursor: pointer;
+  font-size: 18px; line-height: 1;
+  padding: 2px 8px; border-radius: var(--r-sm);
+  color: var(--text-faint);
+  transition: background var(--tx-fast), color var(--tx-fast);
+}
+.det-popover-close:hover { background: var(--bg-muted); color: var(--text-default); }
+.det-popover-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+.det-popover-row {
+  display: flex; flex-direction: column; gap: 5px;
+}
+.det-popover-label {
+  font-size: 11px; font-weight: 600; color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+.det-popover-seg { width: fit-content; }
+.det-popover-seg label { padding: 5px 12px; font-size: 12px; }
+.det-popover-select { font-size: 12px; padding: 5px 8px; width: 100%; }
+.det-popover-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border-top: 1px solid var(--border-soft);
+}
+.det-popover-reset { font-size: 11px; }
+.det-popover-hint { font-size: 10.5px; color: var(--text-faint); }
+.det-popover-reset:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ================================================================
  * GTV SUMMARY BOX (Summary 하단)

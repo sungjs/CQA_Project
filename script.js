@@ -42,21 +42,16 @@ function isGtvMode() { return state.indicationCategory === 'GTV'; }
 function getDetection(vi, ri) {
   return state.detection?.[vi]?.[ri] || null;
 }
-// Project context에 따라 default 동적: negative case project는 tumorPresent default = 'N'
-function getDetectionDefault(field, ctx) {
-  // ctx: { isNegativeCaseProject?: boolean } — 명시 안 하면 state 참조
-  if (field === 'tumorPresent') {
-    const neg = ctx ? !!ctx.isNegativeCaseProject : !!state.isNegativeCaseProject;
-    return neg ? 'N' : DETECTION_DEFAULTS.tumorPresent;
-  }
+// Detection default — 항상 동일 (negative case는 per-cell로 처리, project-level flag 없음)
+function getDetectionDefault(field) {
   return DETECTION_DEFAULTS[field];
 }
 // 4-state 파생 (V3): detection {tumorPresent, missed, hallucinated} → 'TP'|'FN'|'FP'|'TN'
-function deriveDetectionState(detection, ctx) {
+function deriveDetectionState(detection) {
   const d = detection || {};
-  const tumor = d.tumorPresent || getDetectionDefault('tumorPresent', ctx);
-  const missed = d.missed || getDetectionDefault('missed', ctx);
-  const hallucinated = d.hallucinated || getDetectionDefault('hallucinated', ctx);
+  const tumor = d.tumorPresent || DETECTION_DEFAULTS.tumorPresent;
+  const missed = d.missed || DETECTION_DEFAULTS.missed;
+  const hallucinated = d.hallucinated || DETECTION_DEFAULTS.hallucinated;
   if (tumor === 'N') return hallucinated === 'none' ? 'TN' : 'FP';
   return missed === 'none' ? 'TP' : 'FN';
 }
@@ -67,12 +62,141 @@ function getCompState4(vi, ri) {
 // missed/hallucinated bin 분포 집계 (Summary용)
 function getDetectionBin(vi, ri, key) {
   const d = getDetection(vi, ri);
-  return (d && d[key]) || getDetectionDefault(key);
+  return (d && d[key]) || DETECTION_DEFAULTS[key];
 }
+// Detection popover editor — 현재 열려있는 셀 (한 번에 하나만)
+let detPopoverEl = null;
+let detPopoverContext = null; // { vi, ri, anchor }
+
+function closeDetectionEditor() {
+  if (detPopoverEl) { detPopoverEl.remove(); detPopoverEl = null; }
+  detPopoverContext = null;
+  document.removeEventListener('mousedown', onDetectionEditorOutside, true);
+  document.removeEventListener('keydown', onDetectionEditorKey, true);
+}
+function onDetectionEditorOutside(e) {
+  if (!detPopoverEl) return;
+  if (detPopoverEl.contains(e.target)) return;
+  // 다른 cell 클릭이면 popover만 닫힘 (그쪽 cell의 click이 새 popover 열음)
+  closeDetectionEditor();
+}
+function onDetectionEditorKey(e) {
+  if (e.key === 'Escape') { e.preventDefault(); closeDetectionEditor(); }
+}
+
+function openDetectionEditor(vi, ri, anchor) {
+  // 이미 같은 cell이면 토글 닫음
+  if (detPopoverContext && detPopoverContext.vi === vi && detPopoverContext.ri === ri) {
+    closeDetectionEditor();
+    return;
+  }
+  closeDetectionEditor();
+
+  const d = getDetection(vi, ri) || {};
+  const t = d.tumorPresent || DETECTION_DEFAULTS.tumorPresent;
+  const m = d.missed || DETECTION_DEFAULTS.missed;
+  const h = d.hallucinated || DETECTION_DEFAULTS.hallucinated;
+  const patientLabel = state.validations[vi] || `#${vi}`;
+  const roiLabel = state.rois[ri] || `#${ri}`;
+  const isCurrentlyEditable = !currentReadOnly;
+
+  const bins = COUNT_BINS;
+  const mOpts = bins.map(b => `<option value="${b}" ${m === b ? 'selected' : ''}>${COUNT_BIN_LABEL[b]}</option>`).join('');
+  const hOpts = bins.map(b => `<option value="${b}" ${h === b ? 'selected' : ''}>${COUNT_BIN_LABEL[b]}</option>`).join('');
+
+  const pop = document.createElement('div');
+  pop.className = 'det-popover';
+  pop.innerHTML = `
+    <div class="det-popover-title">
+      <span class="det-popover-patient">${esc(patientLabel)}</span>
+      <span class="det-popover-sep">·</span>
+      <span class="det-popover-roi">${esc(roiLabel)}</span>
+      <button type="button" class="det-popover-close" aria-label="닫기">×</button>
+    </div>
+    <div class="det-popover-body">
+      <div class="det-popover-row">
+        <span class="det-popover-label">Tumor in reference</span>
+        <div class="segmented det-popover-seg">
+          <label><input type="radio" name="det-t-pop" value="Y" ${t === 'Y' ? 'checked' : ''} ${isCurrentlyEditable ? '' : 'disabled'}/>Y (present)</label>
+          <label><input type="radio" name="det-t-pop" value="N" ${t === 'N' ? 'checked' : ''} ${isCurrentlyEditable ? '' : 'disabled'}/>N (absent)</label>
+        </div>
+      </div>
+      <div class="det-popover-row">
+        <span class="det-popover-label">Missed lesion(s)</span>
+        <select id="popDetMissed" class="plain det-popover-select" ${isCurrentlyEditable ? '' : 'disabled'}>${mOpts}</select>
+      </div>
+      <div class="det-popover-row">
+        <span class="det-popover-label">Hallucinated</span>
+        <select id="popDetHallu" class="plain det-popover-select" ${isCurrentlyEditable ? '' : 'disabled'}>${hOpts}</select>
+      </div>
+    </div>
+    <div class="det-popover-footer">
+      <button type="button" class="btn-link det-popover-reset" ${isCurrentlyEditable ? '' : 'disabled'}>이 셀 초기화</button>
+      <span class="det-popover-hint">ESC 또는 바깥 클릭으로 닫기</span>
+    </div>
+  `;
+
+  document.body.appendChild(pop);
+  detPopoverEl = pop;
+  detPopoverContext = { vi, ri, anchor };
+
+  // 위치 계산 — anchor 셀 아래
+  const r = anchor.getBoundingClientRect();
+  const popW = 280;
+  let left = r.left + window.scrollX;
+  const docW = document.documentElement.clientWidth;
+  if (left + popW > docW - 8) left = Math.max(8, docW - popW - 8);
+  let top = r.bottom + window.scrollY + 6;
+  // 화면 아래로 넘치면 위에 표시
+  if (top + 220 > window.scrollY + window.innerHeight) {
+    top = r.top + window.scrollY - 220 - 6;
+  }
+  pop.style.left = `${left}px`;
+  pop.style.top  = `${top}px`;
+
+  // 핸들러
+  const update = (field, value) => {
+    setDetection(vi, ri, field, value);
+    saveState();
+    renderCompletenessGrid(); // popover는 closeDetectionEditor 호출됨 (cell이 교체됨)
+    renderUsabilityGrid(); renderSummaryView(); renderSpecsGrid();
+    // 새로 그려진 cell을 anchor로 popover 재오픈
+    const newAnchor = el('completenessGrid').querySelector(`.det-cell[data-vi="${vi}"][data-ri="${ri}"]`);
+    if (newAnchor) openDetectionEditor(vi, ri, newAnchor);
+  };
+  pop.querySelectorAll('input[name="det-t-pop"]').forEach(rb => {
+    rb.onchange = (e) => update('tumorPresent', e.target.value);
+  });
+  el('popDetMissed').onchange = (e) => update('missed', e.target.value);
+  el('popDetHallu').onchange = (e) => update('hallucinated', e.target.value);
+
+  pop.querySelector('.det-popover-close').onclick = closeDetectionEditor;
+  pop.querySelector('.det-popover-reset').onclick = () => {
+    if (!confirm('이 셀의 detection을 default (TP — Tumor 있음, missed/hallucinated 없음)로 초기화할까요?')) return;
+    if (state.detection?.[vi]?.[ri]) {
+      delete state.detection[vi][ri];
+      if (Object.keys(state.detection[vi]).length === 0) delete state.detection[vi];
+    }
+    saveState();
+    closeDetectionEditor();
+    renderCompletenessGrid();
+    renderUsabilityGrid(); renderSummaryView(); renderSpecsGrid();
+  };
+
+  document.addEventListener('mousedown', onDetectionEditorOutside, true);
+  document.addEventListener('keydown', onDetectionEditorKey, true);
+
+  // Focus first input (편집 가능 시)
+  if (isCurrentlyEditable) {
+    const firstRadio = pop.querySelector('input[name="det-t-pop"]:checked');
+    if (firstRadio) firstRadio.focus();
+  }
+}
+
 // detection 셀에 field 변경 적용 (default 값이면 entry 정리 — sparse 유지)
 function setDetection(vi, ri, field, value) {
   if (!state.detection) state.detection = {};
-  const isDefault = value === getDetectionDefault(field);
+  const isDefault = value === DETECTION_DEFAULTS[field];
   if (isDefault) {
     if (state.detection[vi] && state.detection[vi][ri]) {
       delete state.detection[vi][ri][field];
@@ -638,9 +762,8 @@ function renderProjectPicker() {
     let tag = '';
     if (p._legacy) tag = ' · <span class="legacy-tag">Legacy</span>';
     else if (p.owner !== currentUser?.uid) tag = ' · <span class="shared-tag">공유</span>';
-    // Metadata badges (modality, stage, negative)
+    // Metadata badges (modality, stage)
     const badges = [];
-    if (p.isNegativeCaseProject) badges.push('<span class="meta-badge meta-badge-neg" title="Negative case set">🚫 neg</span>');
     if (p.modality) badges.push(`<span class="meta-badge" title="Modality">${esc(p.modality)}</span>`);
     if (p.evaluationStage) badges.push(`<span class="meta-badge" title="Stage">${esc(p.evaluationStage)}</span>`);
     if (p.modelVersion) badges.push(`<span class="meta-badge" title="Model version">${esc(p.modelVersion)}</span>`);
@@ -1423,25 +1546,6 @@ function setupAddForms() {
   el('metaModalityDetail').addEventListener('input', (e) => { state.modalityDetail = e.target.value; saveState(); });
   el('metaStage').addEventListener('input', (e) => { state.evaluationStage = e.target.value; saveState(); renderProjectMetadata(); renderProjectPicker(); });
   el('metaModelVersion').addEventListener('input', (e) => { state.modelVersion = e.target.value; saveState(); renderProjectMetadata(); renderProjectPicker(); });
-  // Negative project toggle — 데이터 있을 때 confirm
-  el('metaIsNegative').addEventListener('change', (e) => {
-    const newVal = e.target.checked;
-    const oldVal = !!state.isNegativeCaseProject;
-    if (newVal === oldVal) return;
-    const hasData = state.detection && Object.keys(state.detection).length > 0;
-    if (hasData && !confirm(
-      `Negative case 토글: 모든 빈 detection 셀의 의미가 바뀝니다.\n\n` +
-      `현재: 빈 셀 = ${oldVal ? 'TN (tumor 없음, AI도 추론 안 함)' : 'TP (tumor 있고 AI 잡음)'}\n` +
-      `변경 후: 빈 셀 = ${newVal ? 'TN' : 'TP'}\n\n` +
-      `명시적으로 입력된 셀은 그대로 보존됩니다. 계속하시겠습니까?`
-    )) {
-      e.target.checked = oldVal;
-      return;
-    }
-    state.isNegativeCaseProject = newVal;
-    saveState();
-    renderAll();
-  });
 }
 
 // 카드 접기/펼치기 (cutoff, ROI/Val/Test) — inline onclick="toggleCard(this)"에서 호출
@@ -1477,42 +1581,38 @@ function renderCompletenessGrid() {
 
   const hint = el('completenessHint');
   if (hint) hint.textContent = gtv
-    ? '각 환자×ROI 셀에 3개 입력: Tumor 유무, 놓친(missed) lesion 개수, 추가(hallucinated) lesion 개수. 모두 default 두면 TP. Multi-island case도 자연스럽게 표현됩니다.'
+    ? '각 셀에는 4-state(TP/FN/FP/TN)가 자동 표시됩니다. 셀 클릭 시 팝오버에서 Tumor 유무 / Missed / Hallucinated를 편집하세요. 입력 없는 셀은 default TP — Negative case는 그 환자의 셀만 Tumor=N으로 변경.'
     : '각 환자에서 ROI가 누락됐으면 체크하세요. (체크=누락, 빈칸=존재). xlsx에는 존재 셀이 - 로, 누락 셀이 빈칸으로 저장됩니다.';
 
   let html;
   if (gtv) {
-    // GTV unified detection: ROI 1 column, cell 안에 3 micro select (T, M, H)
-    // grid-template-columns: rowhead + R × wide_cell + comment
-    let cols = `${ROWHEAD_W}px`;
-    for (let i = 0; i < R; i++) cols += ` minmax(180px, 220px)`;
-    cols += ` minmax(${COMMENT_W}px, ${COMMENT_MAX}px)`;
-    html = `<div class="g" style="grid-template-columns:${cols}">`;
+    // GTV unified detection compact: ROI 1 column, cell에 4-state badge + (있을 때) annotation
+    // 클릭 시 popover editor (필요한 셀만 missed/hallucinated 입력)
+    html = openGrid(R, 1);
     html += `<div class="c h rh">PatientID</div>`;
     state.rois.forEach(roi => {
-      html += `<div class="c h" title="${esc(roi)} — Tumor / Missed / Hallucinated">${esc(roi)}<span class="c-sub-tiny">T · Miss · Hallu</span></div>`;
+      html += `<div class="c h" title="${esc(roi)} · 셀 클릭으로 편집">${esc(roi)}</div>`;
     });
     html += `<div class="c h cm">Comment</div>`;
 
     const bins = COUNT_BINS;
+    // Compact display: 셀에 4-state badge만, click 시 popover editor 노출
     state.validations.forEach((v, vi) => {
       html += `<div class="c rh">${esc(v)}</div>`;
       state.rois.forEach((roi, ri) => {
         const d = getDetection(vi, ri) || {};
-        const t = d.tumorPresent || 'Y';
         const m = d.missed || 'none';
         const h = d.hallucinated || 'none';
         const st = deriveDetectionState(d);
         const cls = st === 'TP' ? 'comp-tp' : st === 'FN' ? 'comp-fn' : st === 'FP' ? 'comp-fp' : 'comp-tn';
-        const mOpts = bins.map(b => `<option value="${b}" ${m === b ? 'selected' : ''}>${COUNT_BIN_LABEL[b]}</option>`).join('');
-        const hOpts = bins.map(b => `<option value="${b}" ${h === b ? 'selected' : ''}>${COUNT_BIN_LABEL[b]}</option>`).join('');
-        html += `<div class="c det-cell ${cls}" title="${st}${m !== 'none' ? ` · Missed ${COUNT_BIN_LABEL[m]}` : ''}${h !== 'none' ? ` · Hallu ${COUNT_BIN_LABEL[h]}` : ''}">
-          <select class="det-input det-t" data-vi="${vi}" data-ri="${ri}" data-field="tumorPresent" title="Tumor present in reference?">
-            <option value="Y" ${t === 'Y' ? 'selected' : ''}>Y</option>
-            <option value="N" ${t === 'N' ? 'selected' : ''}>N</option>
-          </select>
-          <select class="det-input det-m ${m === 'none' ? '' : 'det-warn'}" data-vi="${vi}" data-ri="${ri}" data-field="missed" title="Missed lesion(s)">${mOpts}</select>
-          <select class="det-input det-h ${h === 'none' ? '' : 'det-warn'}" data-vi="${vi}" data-ri="${ri}" data-field="hallucinated" title="Hallucinated/spurious">${hOpts}</select>
+        // Compact badge: 상태 + (있을 때만) missed/hallucinated indicator
+        const annots = [];
+        if (m !== 'none') annots.push(`M:${COUNT_BIN_LABEL[m]}`);
+        if (h !== 'none') annots.push(`H:${COUNT_BIN_LABEL[h]}`);
+        const annotsHtml = annots.length ? `<span class="det-annots">${annots.join(' · ')}</span>` : '';
+        const tip = `${st}${annots.length ? ' · ' + annots.join(', ') : ''} · 클릭하여 편집`;
+        html += `<div class="c det-cell ${cls}" data-vi="${vi}" data-ri="${ri}" tabindex="0" role="button" title="${esc(tip)}">
+          <span class="det-state">${st}</span>${annotsHtml}
         </div>`;
       });
       html += `<div class="c cm"><input type="text" data-vi="${vi}" class="comp-comment" value="${esc(state.completenessComment[vi] || '')}" /></div>`;
@@ -1524,7 +1624,7 @@ function renderCompletenessGrid() {
       state.rois.forEach((_, ri) => {
         let n = 0; for (let vi = 0; vi < V; vi++) if (getCompState4(vi, ri) === st) n++;
         const cls = st === 'FN' ? 'fail' : st === 'TP' ? 'pass' : '';
-        html += `<div class="c stat ${cls}">${n}</div>`;
+        html += `<div class="c stat ${cls}">${n || ''}</div>`;
       });
       html += `<div class="c stat cm"></div>`;
     });
@@ -1588,14 +1688,11 @@ function renderCompletenessGrid() {
       saveState(); renderCompletenessGrid(); renderUsabilityGrid(); renderSummaryView(); renderSpecsGrid();
     };
   });
-  // GTV unified detection (v3): 3-input select per cell
-  c.querySelectorAll('.det-input').forEach(sel => {
-    sel.onchange = (e) => {
-      const vi = +e.target.dataset.vi, ri = +e.target.dataset.ri, field = e.target.dataset.field;
-      setDetection(vi, ri, field, e.target.value);
-      saveState();
-      renderCompletenessGrid();
-      renderUsabilityGrid(); renderSummaryView(); renderSpecsGrid();
+  // GTV cell click → popover editor 열기 (compact mode, on-demand expand)
+  c.querySelectorAll('.det-cell').forEach(cell => {
+    cell.onclick = (e) => openDetectionEditor(+cell.dataset.vi, +cell.dataset.ri, cell);
+    cell.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetectionEditor(+cell.dataset.vi, +cell.dataset.ri, cell); }
     };
   });
   c.querySelectorAll('.comp-comment').forEach(inp => { inp.oninput = (e) => { state.completenessComment[+e.target.dataset.vi] = e.target.value; saveState(); }; });
@@ -1818,34 +1915,22 @@ function renderSummaryView() {
   });
   html += '</tbody></table>';
   if (gtv) {
-    // 전체 patient-level 집계
+    // 전체 patient-level 집계 — positive & negative case 자연스럽게 섞여있음
     let totalFn = 0, totalFp = 0, totalTp = 0, totalTn = 0;
     cp.forEach(s => { totalFn += s.fn; totalFp += s.fp; totalTp += s.tp; totalTn += s.tn; });
     const overallMiss = (totalTp + totalFn) ? (totalFn / (totalTp + totalFn) * 100).toFixed(1) : '-';
-    // Negative case project: 전체 N case 중 FP 비율 (specificity 보완 지표)
     const totalN = totalFp + totalTn;
     const fpRate = totalN ? (totalFp / totalN * 100).toFixed(1) : '-';
-    const isNeg = !!state.isNegativeCaseProject;
 
-    let primaryChip, secondaryChip;
-    if (isNeg) {
-      // Negative project: FP rate가 primary, Miss rate는 secondary (N/A often)
-      primaryChip = `<span class="stat-chip stat-miss stat-emphasis"><span class="stat-label">FP rate</span><span class="stat-val">${fpRate}%</span></span>`;
-      secondaryChip = `<span class="stat-chip stat-miss"><span class="stat-label">Miss rate</span><span class="stat-val">${overallMiss}%</span></span>`;
-    } else {
-      primaryChip = `<span class="stat-chip stat-miss stat-emphasis"><span class="stat-label">Miss rate</span><span class="stat-val">${overallMiss}%</span></span>`;
-      secondaryChip = totalN ? `<span class="stat-chip"><span class="stat-label">FP rate</span><span class="stat-val">${fpRate}%</span></span>` : '';
-    }
-
-    html += `<div class="gtv-summary-box${isNeg ? ' negative-mode' : ''}">
-      <div class="gtv-summary-title">${isNeg ? '🚫 Negative case GTV — Pillar 3 평가' : 'GTV 전체 지표'}</div>
+    html += `<div class="gtv-summary-box">
+      <div class="gtv-summary-title">GTV 전체 지표</div>
       <div class="gtv-summary-stats">
         <span class="stat-chip stat-tp"><span class="stat-label">TP</span><span class="stat-val">${totalTp}</span></span>
         <span class="stat-chip stat-fn"><span class="stat-label">FN <small>missed</small></span><span class="stat-val">${totalFn}</span></span>
         <span class="stat-chip stat-fp"><span class="stat-label">FP <small>spurious</small></span><span class="stat-val">${totalFp}</span></span>
         <span class="stat-chip stat-tn"><span class="stat-label">TN</span><span class="stat-val">${totalTn}</span></span>
-        ${secondaryChip}
-        ${primaryChip}
+        ${totalN > 0 ? `<span class="stat-chip"><span class="stat-label">FP rate <small>FP/(FP+TN)</small></span><span class="stat-val">${fpRate}%</span></span>` : ''}
+        <span class="stat-chip stat-miss stat-emphasis"><span class="stat-label">Miss rate <small>FN/(FN+TP)</small></span><span class="stat-val">${overallMiss}%</span></span>
       </div>
     </div>`;
   }
@@ -1873,23 +1958,15 @@ function renderProjectMetadata() {
   const md = el('metaModalityDetail'); if (md) md.value = state.modalityDetail || '';
   const s = el('metaStage'); if (s) s.value = state.evaluationStage || '';
   const v = el('metaModelVersion'); if (v) v.value = state.modelVersion || '';
-  const n = el('metaIsNegative'); if (n) n.checked = !!state.isNegativeCaseProject;
-  // 헤더에 채워진 metadata count 표시
   const filled = [state.modality, state.evaluationStage, state.modelVersion].filter(x => x && x.trim()).length;
   const status = el('projectMetaStatus');
-  if (status) {
-    const parts = [];
-    if (filled > 0) parts.push(`${filled} 항목`);
-    if (state.isNegativeCaseProject) parts.push('🚫 negative');
-    status.textContent = parts.length ? `(${parts.join(' · ')})` : '';
-  }
-  // owner 외에는 readonly
+  if (status) status.textContent = filled > 0 ? `(${filled} 항목)` : '';
   const isOwner = (() => {
     if (!currentUser || !currentProjectId) return true;
     const entry = userProjects.find(p => p.id === currentProjectId);
     return !entry || entry.owner === currentUser.uid;
   })();
-  ['metaModality', 'metaModalityDetail', 'metaStage', 'metaModelVersion', 'metaIsNegative'].forEach(id => {
+  ['metaModality', 'metaModalityDetail', 'metaStage', 'metaModelVersion'].forEach(id => {
     const elem = el(id);
     if (elem) elem.disabled = !isOwner || currentReadOnly;
   });
