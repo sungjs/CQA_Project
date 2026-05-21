@@ -688,6 +688,11 @@ body.sidebar-collapsed #sidebar { transform: translateX(-100%); }
   color: var(--danger-text);
   font-weight: 600;
 }
+.meta-badge-reviewers {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 600;
+}
 
 .project-list li .project-meta .shared-tag { color: var(--info); font-weight: 600; }
 .project-list li .project-meta .legacy-tag { color: var(--legacy); font-weight: 600; }

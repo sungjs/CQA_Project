@@ -608,6 +608,20 @@ async function loadReviewerEvaluation(modelId, reviewerUid) {
     currentReviewerId = reviewerUid;
     currentReadOnly = reviewerUid !== currentUser.uid;
     try { localStorage.setItem(LAST_PROJECT_LS_KEY(currentUser.uid), modelId); } catch(e) {}
+    // 다른 reviewer 평가에 빠르게 접근하도록 자동 expand + 평가자 list lazy fetch
+    if (!expandedModels.has(modelId)) {
+      expandedModels.add(modelId);
+      fetchModelReviewers(modelId).then((reviewers) => {
+        renderProjectPicker();
+        // 본인 평가가 비어있고 다른 평가자가 있으면 안내 toast (한 번만)
+        const isSelfEmpty = reviewerUid === currentUser.uid && !rSnap.exists;
+        const others = (reviewers || []).filter(r => r.uid !== currentUser.uid);
+        if (isSelfEmpty && others.length > 0) {
+          const names = others.map(r => (r.reviewerEmail || r.uid).split('@')[0]).slice(0, 3).join(', ');
+          toast('info', `이 모델에 동료 ${others.length}명의 평가가 있습니다 (${names}). 사이드바에서 평가자 이름을 클릭하면 그들의 점수를 볼 수 있어요.`, { duration: 8000 });
+        }
+      }).catch(() => {});
+    }
     renderAll();
     updateReadOnlyBanner();
     renderProjectPicker();
@@ -841,8 +855,14 @@ function renderProjectPicker() {
     let tag = '';
     if (p._legacy) tag = ' · <span class="legacy-tag">Legacy</span>';
     else if (p.owner !== currentUser?.uid) tag = ' · <span class="shared-tag">공유</span>';
-    // Metadata badges (modality, stage)
+    // Metadata badges (modality, stage, reviewer count)
     const badges = [];
+    // Reviewer count badge (cache에 있을 때만)
+    const cachedReviewers = modelReviewersCache.get(p.id);
+    if (cachedReviewers && cachedReviewers.length > 0) {
+      const others = cachedReviewers.filter(r => r.uid !== currentUser?.uid).length;
+      if (others > 0) badges.push(`<span class="meta-badge meta-badge-reviewers" title="${cachedReviewers.length}명 평가자 — 펼쳐서 보기">👥 ${cachedReviewers.length}</span>`);
+    }
     if (p.modality) badges.push(`<span class="meta-badge" title="Modality">${esc(p.modality)}</span>`);
     if (p.evaluationStage) badges.push(`<span class="meta-badge" title="Stage">${esc(p.evaluationStage)}</span>`);
     if (p.modelVersion) badges.push(`<span class="meta-badge" title="Model version">${esc(p.modelVersion)}</span>`);
