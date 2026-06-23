@@ -2111,7 +2111,7 @@ function renderUsabilityGrid() {
     const psCls = ps ? ' pstat-' + ps : '';
     html += `<div class="c rh rh-status${psCls}" data-vi="${vi}">`
       + `<button type="button" class="pstatus pstatus-${ps || 'none'}" data-vi="${vi}" title="${esc(PATIENT_STATUS_TITLE[ps || 'none'])}">${PATIENT_STATUS_ICON[ps || 'none']}</button>`
-      + `<span class="rh-name">${esc(v)}</span></div>`;
+      + `<span class="rh-name" title="${esc(v)}">${esc(v)}</span></div>`;
     state.rois.forEach((roi, ri) => {
       if (isUnscoreable(vi, ri)) html += `<div class="c missing" data-vi="${vi}" data-ri="${ri}">❌</div>`;
       else {

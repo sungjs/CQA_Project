@@ -489,6 +489,11 @@ textarea.plain { line-height: 1.5; resize: vertical; }
 .g > .c.rh.rh-status .rh-name {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0;
 }
+/* hover 시 전체 patient ID 보이게 (긴 ID 2줄 wrap) */
+.g > .c.rh.rh-status:hover { z-index: 5; background: var(--bg-muted); }
+.g > .c.rh.rh-status:hover .rh-name {
+  overflow: visible; white-space: normal; word-break: break-all; line-height: 1.3;
+}
 .pstatus {
   flex: 0 0 auto; width: 20px; height: 20px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
