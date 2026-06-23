@@ -416,9 +416,10 @@
         <button id="usBulkBtn" class="btn-link">빈 셀 전체 채우기</button>
         <span id="usSelectBar" class="us-sel-bar" style="display:none">
           <span id="usSelCount" class="us-sel-count">0칸 선택</span>
-          <span class="us-sel-hint">셀·행(환자)·열(ROI) 헤더 클릭으로 선택</span>
+          <span class="us-sel-hint">셀 드래그 · 행(환자)/열(ROI) 헤더 클릭으로 선택</span>
           <input id="usSelScore" type="text" inputmode="numeric" maxlength="1" class="us-sel-score" placeholder="점수" />
-          <button id="usSelFillBtn" class="btn btn-dark btn-sm">빈 칸 채우기</button>
+          <label class="us-ow"><input type="checkbox" id="usSelOverwrite" /> 덮어쓰기</label>
+          <button id="usSelFillBtn" class="btn btn-dark btn-sm">채우기</button>
           <button id="usSelAllBtn" class="btn-link">전체 선택</button>
           <button id="usSelClearBtn" class="btn-link">선택 해제</button>
         </span>

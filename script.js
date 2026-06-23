@@ -53,7 +53,7 @@ const CRITERIA_GTV = ['3. Target coverage', '4. Non-target exclusion', '5. Bound
 // 호환성: 일부 외부 참조용. 신규 코드는 getCriteria() 사용
 const CRITERIA = CRITERIA_OAR;
 const CUTOFF_TYPES = ['A', 'B', 'C'];
-const REVIEW_KEYS = ['completeness', 'completenessComment', 'usability', 'usabilityComment', 'variant', 'variantComment', 'specs', 'specsComment', 'patientMeta', 'testMeta', 'truthAbsent', 'predPresent', 'detection', 'reviewerComment', 'reviewConfidence'];
+const REVIEW_KEYS = ['completeness', 'completenessComment', 'usability', 'usabilityComment', 'variant', 'variantComment', 'specs', 'specsComment', 'patientMeta', 'testMeta', 'truthAbsent', 'predPresent', 'detection', 'patientStatus', 'reviewerComment', 'reviewConfidence'];
 const GTV_COMPLETENESS_STATES = ['TP', 'FN', 'FP', 'TN'];
 
 function getDefaultCriteria() {
@@ -417,6 +417,8 @@ function defaultState() {
     // Legacy GTV (v2 schema, v3에서 자동 마이그레이션됨, rollback용으로 보존)
     truthAbsent: {},
     predPresent: {},
+    // 환자별 검토 상태 (Usability 그리드 patient ID 토글) — [vi] = 'done' | 'review'
+    patientStatus: {},
     // Reviewer-level metadata (per-reviewer per-model)
     reviewerComment: '',         // 자유서술 (failure mode 노트 등)
     reviewConfidence: ''         // '' | '1'..'5' — 케이스 난이도 (1=쉬움, 5=어려움/애매함)
@@ -1747,6 +1749,7 @@ function setupAddForms() {
   el('usSelClearBtn').onclick = () => { usSelected.clear(); reapplyUsSel(el('usabilityGrid')); updateUsSelCount(); };
   el('usSelFillBtn').onclick = fillSelectedUsability;
   el('usSelScore').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); fillSelectedUsability(); } };
+  document.addEventListener('mouseup', () => { usDragging = false; });   // 드래그 종료 (그리드 밖에서 놓아도)
   el('projectName').oninput = (e) => { state.projectName = e.target.value; saveState(); };
   el('notionLink').oninput = (e) => { state.notionLink = e.target.value; saveState(); };
   document.querySelectorAll('input[name="indicationCategory"]').forEach(r => {
@@ -2002,6 +2005,16 @@ function validateScoreInput(val) {
 let usSelectMode = false;
 const usSelected = new Set();
 const usKey = (vi, ri) => vi + ':' + ri;
+let usDragging = false, usDragMode = 'add';   // 드래그 paint 상태 ('add' | 'remove')
+
+// 드래그/클릭으로 한 셀에 현재 paint 모드 적용
+function usApplyPaint(cell) {
+  if (!cell || cell.classList.contains('missing')) return;
+  const k = usKey(+cell.dataset.vi, +cell.dataset.ri);
+  if (usDragMode === 'add') usSelected.add(k); else usSelected.delete(k);
+  cell.classList.toggle('cell-sel', usSelected.has(k));
+  updateUsSelCount();
+}
 
 function setUsSelectMode(on) {
   usSelectMode = on;
@@ -2043,16 +2056,46 @@ function fillSelectedUsability() {
   const { value, valid } = validateScoreInput(scoreEl ? scoreEl.value : '');
   if (!valid || value === '') { alert('1~5 사이의 점수를 입력하세요.'); return; }
   if (usSelected.size === 0) { alert('먼저 채울 셀을 선택하세요.'); return; }
+  const owEl = el('usSelOverwrite');
+  const overwrite = !!(owEl && owEl.checked);
   let filled = 0;
   usSelected.forEach(k => {
     const [vi, ri] = k.split(':').map(Number);
     if (isUnscoreable(vi, ri)) return;
-    if (getCell(state.usability, vi, ri)) return; // 빈 칸만
+    if (!overwrite && getCell(state.usability, vi, ri)) return; // 덮어쓰기 off → 빈 칸만
     setCell(state.usability, vi, ri, value); filled++;
   });
-  if (filled === 0) { alert('선택된 셀 중 빈 칸이 없습니다. (기존 점수는 덮어쓰지 않음)'); return; }
+  if (filled === 0) {
+    alert(overwrite ? '선택된 채점 가능한 셀이 없습니다.' : '선택된 셀 중 빈 칸이 없습니다. (덮어쓰기를 켜면 기존 점수도 교체)');
+    return;
+  }
   saveState();
   renderUsabilityGrid(); renderSpecsGrid(); renderSummaryView();
+}
+
+// ===== 환자별 검토 상태 토글 (미표시 → ✅완료 → 🔁재검토 → 미표시) =====
+const PATIENT_STATUS_NEXT = { '': 'done', 'done': 'review', 'review': '' };
+const PATIENT_STATUS_ICON = { 'none': '○', 'done': '✅', 'review': '🔁' };
+const PATIENT_STATUS_TITLE = {
+  'none': '검토 상태: 미표시 — 클릭하면 ✅ 완료',
+  'done': '검토 상태: ✅ 완료 — 클릭하면 🔁 재검토',
+  'review': '검토 상태: 🔁 재검토 — 클릭하면 미표시'
+};
+function applyPatientStatusBtn(btn, status) {
+  const s = status || 'none';
+  btn.classList.remove('pstatus-none', 'pstatus-done', 'pstatus-review');
+  btn.classList.add('pstatus-' + s);
+  btn.textContent = PATIENT_STATUS_ICON[s];
+  btn.title = PATIENT_STATUS_TITLE[s];
+  const rh = btn.closest('.c.rh');
+  if (rh) { rh.classList.remove('pstat-done', 'pstat-review'); if (status) rh.classList.add('pstat-' + status); }
+}
+function cyclePatientStatus(vi, btn) {
+  if (!state.patientStatus) state.patientStatus = {};
+  const next = PATIENT_STATUS_NEXT[state.patientStatus[vi] || ''];
+  if (next) state.patientStatus[vi] = next; else delete state.patientStatus[vi];
+  saveState();
+  applyPatientStatusBtn(btn, next);
 }
 
 function renderUsabilityGrid() {
@@ -2064,7 +2107,11 @@ function renderUsabilityGrid() {
   state.rois.forEach((roi, ri) => html += `<div class="c h" data-ri="${ri}">${esc(roi)}</div>`);
   html += `<div class="c h cm">Comment</div>`;
   state.validations.forEach((v, vi) => {
-    html += `<div class="c rh" data-vi="${vi}">${esc(v)}</div>`;
+    const ps = (state.patientStatus && state.patientStatus[vi]) || '';
+    const psCls = ps ? ' pstat-' + ps : '';
+    html += `<div class="c rh rh-status${psCls}" data-vi="${vi}">`
+      + `<button type="button" class="pstatus pstatus-${ps || 'none'}" data-vi="${vi}" title="${esc(PATIENT_STATUS_TITLE[ps || 'none'])}">${PATIENT_STATUS_ICON[ps || 'none']}</button>`
+      + `<span class="rh-name">${esc(v)}</span></div>`;
     state.rois.forEach((roi, ri) => {
       if (isUnscoreable(vi, ri)) html += `<div class="c missing" data-vi="${vi}" data-ri="${ri}">❌</div>`;
       else {
@@ -2108,25 +2155,37 @@ function renderUsabilityGrid() {
     inp.onkeydown = handleGridKeyNav;
   });
   c.querySelectorAll('.us-comment').forEach(inp => { inp.oninput = (e) => { state.usabilityComment[+e.target.dataset.vi] = e.target.value; saveState(); }; });
+  // 환자별 검토 상태 토글 (행 선택 위임으로 전파 방지)
+  c.querySelectorAll('.pstatus').forEach(btn => {
+    btn.onclick = (e) => { e.stopPropagation(); cyclePatientStatus(+btn.dataset.vi, btn); };
+  });
 
-  // 선택 모드: input 클릭 비활성 + 기존 선택 표시 + 클릭 위임
+  // 선택 모드: input 클릭 비활성 + 기존 선택 표시 + 드래그 paint / 헤더 클릭
   c.classList.toggle('us-selecting', usSelectMode);
   if (usSelectMode) reapplyUsSel(c);
+  // 셀: mousedown으로 paint 시작 (드래그 멀티선택), 시작 셀의 선택 여부로 add/remove 결정
+  c.onmousedown = (e) => {
+    if (!usSelectMode) return;
+    const cell = e.target.closest('.c[data-vi][data-ri]');
+    if (!cell || cell.classList.contains('missing')) return;
+    e.preventDefault();                          // 드래그 중 텍스트 선택 방지
+    usDragging = true;
+    usDragMode = usSelected.has(usKey(+cell.dataset.vi, +cell.dataset.ri)) ? 'remove' : 'add';
+    usApplyPaint(cell);
+  };
+  c.onmouseover = (e) => {
+    if (!usDragging || !usSelectMode) return;
+    usApplyPaint(e.target.closest('.c[data-vi][data-ri]'));
+  };
+  // 헤더 클릭: 행(환자)/열(ROI) 전체 토글 (셀 토글은 mousedown paint가 처리)
   c.onclick = (e) => {
     if (!usSelectMode) return;
     const colH = e.target.closest('.c.h[data-ri]');
     const rowH = e.target.closest('.c.rh[data-vi]');
-    const cell = e.target.closest('.c[data-vi][data-ri]');
-    if (cell) {                                  // 개별 채점 셀 (헤더는 data-vi/data-ri 둘 다 없음)
-      if (cell.classList.contains('missing')) return;
-      const vi = +cell.dataset.vi, ri = +cell.dataset.ri, k = usKey(vi, ri);
-      if (usSelected.has(k)) usSelected.delete(k); else usSelected.add(k);
-      cell.classList.toggle('cell-sel', usSelected.has(k));
-      updateUsSelCount();
-    } else if (colH) {                           // ROI 열 헤더 → 열 전체 토글
+    if (colH) {
       toggleUsGroup(usScoreableInCol(+colH.dataset.ri).map(vi => [vi, +colH.dataset.ri]));
       reapplyUsSel(c); updateUsSelCount();
-    } else if (rowH) {                           // 환자 행 헤더 → 행 전체 토글
+    } else if (rowH) {
       toggleUsGroup(usScoreableInRow(+rowH.dataset.vi).map(ri => [+rowH.dataset.vi, ri]));
       reapplyUsSel(c); updateUsSelCount();
     }

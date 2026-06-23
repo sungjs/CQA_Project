@@ -468,8 +468,11 @@ textarea.plain { line-height: 1.5; resize: vertical; }
 .us-sel-count { font-size: 12px; font-weight: 600; color: var(--accent); white-space: nowrap; }
 .us-sel-hint { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
 .us-sel-score { width: 48px; text-align: center; font-size: 13px; padding: 3px 4px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg-card); color: var(--text-default); }
+.us-ow { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); cursor: pointer; white-space: nowrap; }
+.us-ow input { cursor: pointer; }
 .btn-link.active { color: var(--accent); font-weight: 700; }
-/* 선택 모드: 셀 input 비활성 + 선택 가능 영역에 pointer */
+/* 선택 모드: 셀 input 비활성 + 선택 가능 영역에 pointer + 드래그 중 텍스트 선택 방지 */
+#usabilityGrid.us-selecting { user-select: none; -webkit-user-select: none; }
 #usabilityGrid.us-selecting .us-inp { pointer-events: none; }
 #usabilityGrid.us-selecting .c[data-vi][data-ri]:not(.missing),
 #usabilityGrid.us-selecting .c.h[data-ri],
@@ -477,6 +480,28 @@ textarea.plain { line-height: 1.5; resize: vertical; }
 #usabilityGrid.us-selecting .c[data-vi][data-ri]:not(.missing):hover { outline: 1px dashed var(--accent); outline-offset: -2px; }
 /* 선택된 셀: score 배경(!important)을 덮지 못해도 보이도록 inset ring */
 .g > .c.cell-sel { box-shadow: inset 0 0 0 2px var(--accent); background: var(--accent-soft); }
+
+/* ===== 환자별 검토 상태 토글 (Usability 행 헤더) ===== */
+.g > .c.rh.rh-status {
+  display: flex; align-items: center; gap: 6px;
+  -webkit-line-clamp: unset; line-clamp: unset;
+}
+.g > .c.rh.rh-status .rh-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0;
+}
+.pstatus {
+  flex: 0 0 auto; width: 20px; height: 20px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--bg-card); cursor: pointer; font-size: 11px; line-height: 1;
+}
+.pstatus:hover { border-color: var(--border-strong); }
+.pstatus-none { color: var(--text-faint); }
+.pstatus-done { background: var(--success-soft); border-color: var(--success-border); }
+.pstatus-review { background: var(--warning-soft); border-color: var(--warning); }
+/* 행 전체 좌측 accent (rh의 우측 border는 유지) */
+.g > .c.rh.pstat-done { box-shadow: inset 3px 0 0 var(--success), inset -1px 0 0 var(--border); }
+.g > .c.rh.pstat-review { box-shadow: inset 3px 0 0 var(--warning), inset -1px 0 0 var(--border); }
 .prog-bar {
   width: 44px; height: 6px; background: var(--border);
   border-radius: var(--r-pill); overflow: hidden;
