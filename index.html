@@ -46,10 +46,9 @@
   <div id="readOnlyBanner" class="read-only-banner hidden">
     🔒 <b>읽기 전용 (Legacy 평가)</b> · 변경 내용은 저장되지 않습니다. XLSX/PDF/MD 내보내기는 가능합니다.
   </div>
-  <header class="flex items-center justify-between mb-5 gap-3">
-    <div>
-      <h1 class="text-xl font-bold text-slate-900 tracking-tight">🧪 CQA Input Tool</h1>
-      <p class="text-xs text-slate-500 mt-0.5">ROI/환자 수를 자유롭게 조정하면서 CQA 결과를 입력하고 한 번에 xlsx로 내보냅니다.</p>
+  <header class="flex items-center justify-between mb-4 gap-3">
+    <div class="app-header-title">
+      <h1>🧪 CQA Input Tool</h1>
     </div>
     <div class="flex gap-2 items-center">
       <!-- 동기화 상태 -->
@@ -68,13 +67,33 @@
         <button id="btnSignOut" class="btn-link">로그아웃</button>
       </div>
 
-      <!-- Secondary tools (subtle group) -->
-      <div class="btn-group">
-        <button id="btnLoad" class="btn" title="JSON 불러오기">📂</button>
-        <button id="btnSave" class="btn" title="JSON 저장">💾</button>
-        <button id="btnCopyAll" class="btn" title="전체 MD 복사">📋</button>
-        <button id="btnExportPdf" class="btn" title="PDF 내보내기">🖨</button>
-        <button id="btnClear" class="btn" title="초기화">🗑</button>
+      <!-- Overflow menu — secondary tools 한 곳에 -->
+      <div class="overflow-wrap">
+        <button id="btnOverflow" class="btn" title="추가 도구" aria-haspopup="true" aria-expanded="false">⋯</button>
+        <div id="overflowMenu" class="overflow-menu hidden" role="menu">
+          <button id="btnCopyAll" class="overflow-item" role="menuitem">
+            <span class="oi-icon">📋</span>
+            <span class="oi-text">전체 MD 복사 <span class="oi-aux">— Notion 등에 붙여넣기</span></span>
+          </button>
+          <button id="btnExportPdf" class="overflow-item" role="menuitem">
+            <span class="oi-icon">🖨</span>
+            <span class="oi-text">PDF 내보내기 <span class="oi-aux">— 인쇄 또는 PDF 저장</span></span>
+          </button>
+          <div class="overflow-divider"></div>
+          <button id="btnLoad" class="overflow-item" role="menuitem">
+            <span class="oi-icon">📂</span>
+            <span class="oi-text">JSON 불러오기 <span class="oi-aux">— 백업 복원</span></span>
+          </button>
+          <button id="btnSave" class="overflow-item" role="menuitem">
+            <span class="oi-icon">💾</span>
+            <span class="oi-text">JSON 저장 <span class="oi-aux">— 로컬 백업</span></span>
+          </button>
+          <div class="overflow-divider"></div>
+          <button id="btnClear" class="overflow-item oi-danger" role="menuitem">
+            <span class="oi-icon">🗑</span>
+            <span class="oi-text">초기화 <span class="oi-aux">— 현재 모델 모든 입력 삭제</span></span>
+          </button>
+        </div>
       </div>
 
       <!-- Primary action -->
@@ -83,28 +102,69 @@
     </div>
   </header>
 
-  <div class="card mb-2">
-    <div class="grid grid-cols-2 gap-5">
-      <label class="text-sm">
-        <span class="block font-medium mb-1.5 text-slate-700">모델명 <span class="text-xs text-slate-400 font-normal">(파일명에 사용)</span></span>
-        <input id="projectName" class="plain w-full" placeholder="예: GBM_v1_2026Q2" />
-      </label>
-      <label class="text-sm">
-        <span class="block font-medium mb-1.5 text-slate-700">총평 / Notion 링크 <span class="text-xs text-slate-400 font-normal">(선택)</span></span>
-        <input id="notionLink" class="plain w-full" placeholder="노션 페이지 URL 또는 자유 메모" />
-      </label>
+  <!-- Main view tabs (Setup / Evaluate / Results) -->
+  <nav id="mainTabs" class="main-tabs" role="tablist">
+    <button class="main-tab active" data-view="setup" role="tab" aria-selected="true">
+      <span class="main-tab-icon">📋</span>
+      <span class="main-tab-text"><span class="main-tab-label">Setup</span><span class="main-tab-sub">모델 · 환자 · 기준</span></span>
+    </button>
+    <button class="main-tab" data-view="evaluate" role="tab" aria-selected="false">
+      <span class="main-tab-icon">✍</span>
+      <span class="main-tab-text"><span class="main-tab-label">Evaluate</span><span class="main-tab-sub">평가 입력</span></span>
+    </button>
+    <button class="main-tab" data-view="results" role="tab" aria-selected="false">
+      <span class="main-tab-icon">📊</span>
+      <span class="main-tab-text"><span class="main-tab-label">Results</span><span class="main-tab-sub">통계 · 일치도</span></span>
+    </button>
+  </nav>
+
+  <!-- Empty state — 모델 없을 때 노출 (Setup tab 상단) -->
+  <div id="emptyStateBanner" class="empty-state-banner hidden" data-view="setup">
+    <div class="esb-icon">🚀</div>
+    <div class="esb-body">
+      <div class="esb-title">평가를 시작하려면 모델을 만드세요</div>
+      <div class="esb-sub">모델은 한 모델 버전에 대한 평가 묶음입니다. 사이드바에서 만들거나, 다른 사람의 모델 ID로 참여할 수 있어요.</div>
     </div>
-    <div class="mt-4 pt-4 border-t border-slate-100 flex items-center gap-3 text-sm">
-      <span class="font-medium text-slate-700">평가 유형</span>
-      <div class="segmented">
-        <label><input type="radio" name="indicationCategory" value="OAR" />OAR</label>
-        <label><input type="radio" name="indicationCategory" value="GTV" />GTV</label>
-      </div>
-      <span class="text-xs text-slate-400 ml-auto">OAR: 누락 체크박스 · GTV: 실제/추론 4-state (TP·FN·FP·TN)</span>
+    <div class="esb-actions">
+      <button class="btn btn-primary" id="btnEmptyNew">＋ 새 모델</button>
+      <button class="btn" id="btnEmptyJoin">🔗 ID로 참여</button>
     </div>
   </div>
 
-  <div class="card mb-2 collapsible collapsed">
+  <!-- Signed-out hint — 로그아웃 상태 노출 -->
+  <div id="signedOutHint" class="signed-out-hint hidden" data-view="setup">
+    <div class="soh-icon">🔐</div>
+    <div class="soh-body">
+      <div class="soh-title">로그인하면 클라우드 동기화 + 멀티 평가자 협업</div>
+      <div class="soh-sub">로그인 없이도 모든 기능 사용 가능 (로컬 저장). 다른 사람과 공유하려면 oncosoft.io 계정으로 로그인하세요.</div>
+    </div>
+    <button class="btn" id="btnSignedOutSignIn">🔐 Google 로그인</button>
+  </div>
+
+  <!-- Hero: 모델 핵심 정보 (Setup tab 상단) -->
+  <div class="hero-card mb-3" data-view="setup">
+    <div class="hero-grid">
+      <label class="hero-field">
+        <span class="hero-label">모델명 <span class="hero-label-aux">(파일명)</span></span>
+        <input id="projectName" class="hero-input" placeholder="예: GBM_v1_2026Q2" />
+      </label>
+      <label class="hero-field">
+        <span class="hero-label">Notion 링크 <span class="hero-label-aux">(선택)</span></span>
+        <input id="notionLink" class="hero-input" placeholder="노션 페이지 URL 또는 자유 메모" />
+      </label>
+      <div class="hero-field">
+        <span class="hero-label">평가 유형</span>
+        <div class="segmented">
+          <label><input type="radio" name="indicationCategory" value="OAR" />OAR</label>
+          <label><input type="radio" name="indicationCategory" value="GTV" />GTV</label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2 class="setup-section-title" data-view="setup">모델 환경 <span class="setup-section-aux">(평가 기준 · 메타데이터)</span></h2>
+
+  <div class="card mb-2 collapsible" data-view="setup">
     <div class="card-hd" onclick="toggleCard(this)">
       <h3>🎚 Cutoff 기준 정의</h3>
       <div class="flex items-center gap-2">
@@ -165,7 +225,76 @@
     </div>
   </div>
 
-  <div class="grid grid-cols-3 gap-3 mb-5">
+  <!-- Project metadata (modality / stage / version / negative flag) — 모델 환경 그룹 -->
+  <div id="projectMetaCard" class="card mb-2 collapsible collapsed" data-view="setup">
+    <div class="card-hd" onclick="toggleCard(this)">
+      <h3>📐 모델 메타데이터 <span id="projectMetaStatus"></span></h3>
+      <div class="flex items-center gap-2">
+        <span class="card-hint">modality · 평가 stage · model version</span>
+        <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
+      </div>
+    </div>
+    <div class="card-bd">
+      <p class="text-xs text-slate-500 mb-3">정보용 메타데이터. 평가 로직에는 영향 없음.</p>
+      <div class="grid grid-cols-2 gap-4">
+        <label class="text-sm">
+          <span class="block font-medium mb-1 text-slate-700">Imaging modality</span>
+          <input id="metaModality" class="plain w-full" placeholder="예: CT, MR, PET-CT, multimodal" />
+        </label>
+        <label class="text-sm">
+          <span class="block font-medium mb-1 text-slate-700">Modality detail (선택)</span>
+          <input id="metaModalityDetail" class="plain w-full" placeholder="예: T1c + FLAIR, Multi-phase CT" />
+        </label>
+        <label class="text-sm">
+          <span class="block font-medium mb-1 text-slate-700">Evaluation stage</span>
+          <input id="metaStage" class="plain w-full" placeholder="예: baseline, training_cycle_3, pre_release, post_deployment" />
+        </label>
+        <label class="text-sm">
+          <span class="block font-medium mb-1 text-slate-700">Model version</span>
+          <input id="metaModelVersion" class="plain w-full" placeholder="예: v0.3.1, checkpoint_2026_05_15" />
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sub-metric 라벨 편집 (owner 전용) — 모델 환경 그룹 -->
+  <div id="subMetricCard" class="card mb-3 collapsible collapsed" data-view="setup">
+    <div class="card-hd" onclick="toggleCard(this)">
+      <h3>🏷 3-6 Sub-metric 라벨 <span id="subMetricStatus"></span></h3>
+      <div class="flex items-center gap-2">
+        <span class="card-hint">기본 라벨이 indication에 안 맞으면 owner가 자유 정의</span>
+        <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
+      </div>
+    </div>
+    <div class="card-bd">
+      <p class="text-xs text-slate-500 mb-3">각 항목을 비우면 기본 라벨(placeholder)이 사용됩니다. owner만 수정 가능, 다른 멤버는 read-only.</p>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="text-sm">
+          <span class="block font-medium mb-1 text-slate-700">항목 3</span>
+          <input class="plain w-full sub-metric-input" data-idx="0" />
+        </label>
+        <label class="text-sm">
+          <span class="block font-medium mb-1 text-slate-700">항목 4</span>
+          <input class="plain w-full sub-metric-input" data-idx="1" />
+        </label>
+        <label class="text-sm">
+          <span class="block font-medium mb-1 text-slate-700">항목 5</span>
+          <input class="plain w-full sub-metric-input" data-idx="2" />
+        </label>
+        <label class="text-sm">
+          <span class="block font-medium mb-1 text-slate-700">항목 6</span>
+          <input class="plain w-full sub-metric-input" data-idx="3" />
+        </label>
+      </div>
+      <div class="mt-3 flex items-center gap-2">
+        <button id="btnResetSubMetric" class="btn-link text-xs">기본 라벨로 초기화</button>
+        <span class="text-xs text-slate-400">— 변경 시 기존 데이터는 보존되지만 라벨 의미가 바뀝니다</span>
+      </div>
+    </div>
+  </div>
+
+  <h2 class="setup-section-title" data-view="setup">데이터 <span class="setup-section-aux">(ROI · 환자)</span></h2>
+  <div class="grid grid-cols-3 gap-3 mb-5" data-view="setup">
     <div class="card collapsible collapsed">
       <div class="card-hd" onclick="toggleCard(this)">
         <h3>🎯 ROI 목록 (<span id="roiCount">0</span>) <span class="text-xs font-normal text-slate-400">— Cutoff</span></h3>
@@ -177,6 +306,9 @@
           <input id="roiAddInput" class="plain flex-1 text-sm" placeholder="ROI 이름 입력 후 Enter" />
           <button class="btn btn-dark btn-sm">추가</button>
         </form>
+        <div class="mt-2">
+          <button id="roiBulkBtn" class="btn-link">일괄 입력 (콤마/줄바꿈)</button>
+        </div>
       </div>
     </div>
     <div class="card collapsible collapsed">
@@ -213,76 +345,19 @@
     </div>
   </div>
 
-  <!-- Project metadata (modality / stage / version / negative flag) -->
-  <div id="projectMetaCard" class="card mb-2 collapsible collapsed">
-    <div class="card-hd" onclick="toggleCard(this)">
-      <h3>📐 모델 메타데이터 <span id="projectMetaStatus"></span></h3>
-      <div class="flex items-center gap-2">
-        <span class="card-hint">modality · 평가 stage · model version · negative case 여부</span>
-        <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
-      </div>
-    </div>
-    <div class="card-bd">
-      <p class="text-xs text-slate-500 mb-3">정보용 메타데이터. 평가 로직에는 영향 없음 (단, "Negative case set" 토글은 detection default를 변경).</p>
-      <div class="grid grid-cols-2 gap-4">
-        <label class="text-sm">
-          <span class="block font-medium mb-1 text-slate-700">Imaging modality</span>
-          <input id="metaModality" class="plain w-full" placeholder="예: CT, MR, PET-CT, multimodal" />
-        </label>
-        <label class="text-sm">
-          <span class="block font-medium mb-1 text-slate-700">Modality detail (선택)</span>
-          <input id="metaModalityDetail" class="plain w-full" placeholder="예: T1c + FLAIR, Multi-phase CT" />
-        </label>
-        <label class="text-sm">
-          <span class="block font-medium mb-1 text-slate-700">Evaluation stage</span>
-          <input id="metaStage" class="plain w-full" placeholder="예: baseline, training_cycle_3, pre_release, post_deployment" />
-        </label>
-        <label class="text-sm">
-          <span class="block font-medium mb-1 text-slate-700">Model version</span>
-          <input id="metaModelVersion" class="plain w-full" placeholder="예: v0.3.1, checkpoint_2026_05_15" />
-        </label>
-      </div>
-    </div>
-  </div>
-
-  <!-- Sub-metric 라벨 편집 (모델 owner 전용, collapsible) -->
-  <div id="subMetricCard" class="card mb-2 collapsible collapsed">
-    <div class="card-hd" onclick="toggleCard(this)">
-      <h3>🏷 3-6 Sub-metric 라벨 <span id="subMetricStatus"></span></h3>
-      <div class="flex items-center gap-2">
-        <span class="card-hint">기본 라벨이 indication에 안 맞으면 owner가 자유 정의</span>
-        <button type="button" class="card-toggle" aria-label="접기/펼치기">▼</button>
-      </div>
-    </div>
-    <div class="card-bd">
-      <p class="text-xs text-slate-500 mb-3">각 항목을 비우면 기본 라벨(placeholder)이 사용됩니다. owner만 수정 가능, 다른 멤버는 read-only.</p>
-      <div class="grid grid-cols-2 gap-3">
-        <label class="text-sm">
-          <span class="block font-medium mb-1 text-slate-700">항목 3</span>
-          <input class="plain w-full sub-metric-input" data-idx="0" />
-        </label>
-        <label class="text-sm">
-          <span class="block font-medium mb-1 text-slate-700">항목 4</span>
-          <input class="plain w-full sub-metric-input" data-idx="1" />
-        </label>
-        <label class="text-sm">
-          <span class="block font-medium mb-1 text-slate-700">항목 5</span>
-          <input class="plain w-full sub-metric-input" data-idx="2" />
-        </label>
-        <label class="text-sm">
-          <span class="block font-medium mb-1 text-slate-700">항목 6</span>
-          <input class="plain w-full sub-metric-input" data-idx="3" />
-        </label>
-      </div>
-      <div class="mt-3 flex items-center gap-2">
-        <button id="btnResetSubMetric" class="btn-link text-xs">기본 라벨로 초기화</button>
-        <span class="text-xs text-slate-400">— 변경 시 기존 데이터는 보존되지만 라벨 의미가 바뀝니다</span>
+  <!-- Evaluate context bar (현재 평가 중인 모델 / reviewer) -->
+  <div id="evalContextBar" class="eval-context-bar" data-view="evaluate">
+    <div class="ec-left">
+      <span class="ec-icon">✍</span>
+      <div class="ec-info">
+        <div class="ec-model-name" id="ecModelName">— 모델 선택 —</div>
+        <div class="ec-reviewer" id="ecReviewer">사이드바에서 모델을 선택하세요</div>
       </div>
     </div>
   </div>
 
   <!-- Reviewer Note 카드 (평가자별 메타데이터, collapsible) -->
-  <div id="reviewerNoteCard" class="card mb-2 collapsible collapsed">
+  <div id="reviewerNoteCard" class="card mb-2 collapsible collapsed" data-view="evaluate">
     <div class="card-hd" onclick="toggleCard(this)">
       <h3>📝 평가자 노트</h3>
       <div class="flex items-center gap-2">
@@ -311,7 +386,7 @@
     </div>
   </div>
 
-  <div class="section-wrap mb-2" id="section-completeness" data-section="completeness">
+  <div class="section-wrap mb-2" id="section-completeness" data-section="completeness" data-view="evaluate">
     <div class="section-hd">
       <label><input type="checkbox" class="pdf-chk" checked /><span>📊 1. ROI Completeness</span></label>
       <div class="flex gap-2 items-center">
@@ -320,12 +395,12 @@
       </div>
     </div>
     <div class="section-bd">
-      <p id="completenessHint" class="text-sm text-slate-600 mb-2">각 환자에서 ROI가 <b>누락됐으면 체크</b>하세요. (체크 = 누락, 빈칸 = 존재). xlsx에는 존재 셀이 <code>-</code>로, 누락 셀이 빈칸으로 저장됩니다.</p>
+      <p id="completenessHint" class="section-hint">체크 = 누락 · 빈칸 = 존재 <span class="hint-aux">· XLSX에는 존재 셀이 <code>-</code>로 저장</span></p>
       <div id="completenessGrid" class="grid-wrap"></div>
     </div>
   </div>
 
-  <div class="section-wrap mb-2" id="section-usability" data-section="usability">
+  <div class="section-wrap mb-2" id="section-usability" data-section="usability" data-view="evaluate">
     <div class="section-hd">
       <label><input type="checkbox" class="pdf-chk" checked /><span>⭐ 2. Clinical Usability</span></label>
       <div class="flex gap-2 items-center">
@@ -334,13 +409,13 @@
       </div>
     </div>
     <div class="section-bd">
-      <p class="text-sm text-slate-600 mb-2">1~5 점수를 <b>키보드로 바로 입력</b>하세요. Completeness에서 누락 체크된 셀은 자동 ❌ 고정됩니다. Tab/Enter로 다음 셀, Shift+Tab으로 이전 셀 이동.</p>
-      <p id="usabilityAnchor" class="text-xs text-slate-500 mb-2 italic"></p>
+      <p class="section-hint">1~5 키보드 입력 · 누락 셀은 자동 ❌ <span class="hint-aux">· Tab/Enter 다음 셀, Shift+Tab 이전 셀</span></p>
+      <p id="usabilityAnchor" class="section-hint section-hint-anchor"></p>
       <div id="usabilityGrid" class="grid-wrap"></div>
     </div>
   </div>
 
-  <div class="section-wrap mb-2" id="section-specs" data-section="specs">
+  <div class="section-wrap mb-2" id="section-specs" data-section="specs" data-view="evaluate">
     <div class="section-hd">
       <label><input type="checkbox" class="pdf-chk" checked /><span>📋 3-6. Specifications</span></label>
       <div class="flex gap-2 items-center">
@@ -349,12 +424,12 @@
       </div>
     </div>
     <div class="section-bd">
-      <p class="text-sm text-slate-600 mb-2">각 ROI에서 개선이 필요한 항목을 체크하세요. 점수는 Clinical Usability 평균에서 자동 반올림됩니다.</p>
+      <p class="section-hint">개선 필요한 항목 체크 <span class="hint-aux">· 점수는 Usability 평균에서 자동 반올림</span></p>
       <div id="specsGrid" class="grid-wrap"></div>
     </div>
   </div>
 
-  <div class="section-wrap mb-2" id="section-variant" data-section="variant">
+  <div class="section-wrap mb-2" id="section-variant" data-section="variant" data-view="evaluate">
     <div class="section-hd">
       <label><input type="checkbox" class="pdf-chk" checked /><span>🧬 7-8. Variant cases</span></label>
       <div class="flex gap-2 items-center">
@@ -363,12 +438,31 @@
       </div>
     </div>
     <div class="section-bd">
-      <p class="text-sm text-slate-600 mb-2">Variant Test 환자 점수 입력. <code>1-5</code> 또는 누락의 경우 <code>x</code>를 입력하면 ❌로 변환됩니다.</p>
+      <p class="section-hint">1~5 또는 <code>x</code>(누락) 입력 <span class="hint-aux">· Variant test 환자 전용</span></p>
       <div id="variantGrid" class="grid-wrap"></div>
     </div>
   </div>
 
-  <div class="section-wrap mb-2" id="section-summary" data-section="summary">
+  <!-- Results hero stats bar (3-col) -->
+  <div id="resultsHeroStats" class="results-hero" data-view="results">
+    <div class="rh-stat">
+      <div class="rh-stat-num" id="rhRoiPass">—</div>
+      <div class="rh-stat-label">ROI PASS</div>
+      <div class="rh-stat-sub" id="rhRoiPassSub">—</div>
+    </div>
+    <div class="rh-stat">
+      <div class="rh-stat-num" id="rhReviewers">—</div>
+      <div class="rh-stat-label">평가자</div>
+      <div class="rh-stat-sub" id="rhReviewersSub">—</div>
+    </div>
+    <div class="rh-stat">
+      <div class="rh-stat-num" id="rhKappa">—</div>
+      <div class="rh-stat-label">Fleiss κ <span class="rh-stat-aux">(Usability)</span></div>
+      <div class="rh-stat-sub" id="rhKappaSub">—</div>
+    </div>
+  </div>
+
+  <div class="section-wrap mb-2" id="section-summary" data-section="summary" data-view="results">
     <div class="section-hd">
       <label><input type="checkbox" class="pdf-chk" checked /><span>📈 A. Summary (미리보기)</span></label>
       <div class="flex gap-2 items-center">
@@ -377,12 +471,12 @@
       </div>
     </div>
     <div class="section-bd">
-      <p class="text-sm text-slate-600 mb-2">현재 입력값 기반 실시간 미리보기입니다. 실제 xlsx에는 동일 결과가 수식으로 들어갑니다.</p>
+      <p class="section-hint">실시간 미리보기 <span class="hint-aux">· XLSX에는 동일 결과가 수식으로 저장</span></p>
       <div id="summaryView"></div>
     </div>
   </div>
 
-  <div class="section-wrap mb-2" id="section-interrater" data-section="interrater">
+  <div class="section-wrap mb-2" id="section-interrater" data-section="interrater" data-view="results">
     <div class="section-hd">
       <label><input type="checkbox" class="pdf-chk" /><span>👥 Inter-rater agreement</span></label>
       <div class="flex gap-2 items-center">
@@ -397,10 +491,6 @@
 
   <footer class="app-footer">
     <span class="footer-brand">CQA Input Tool</span>
-    <span class="footer-dot">·</span>
-    <span>로그인 시 Firestore 자동 동기화</span>
-    <span class="footer-dot">·</span>
-    <span>로그아웃 시 브라우저 localStorage 저장</span>
   </footer>
 </div>
 

@@ -236,7 +236,132 @@
 - FOUC (Flash Of Unstyled Content) 방지를 위해 stylesheet 적용 직후 인라인 스크립트로 attribute 설정 (Vercel/Linear 등도 동일 패턴)
 - 사이드바 모델명 hover 시 full expand는 native tooltip보다 빠르게 인지 가능 (마우스 정지 없이도 보임)
 
+---
 
+## 2026-05-20 → 21 — UI/UX 획기적 변경 (3-tab architecture)
 
+### 동기
+사용자 피드백: *"전반적으로 뭔가 번잡하다는 생각이 들어서, UI/UX를 획기적으로 변경해줘. 나 한시간 뒤에 올게."*
+
+기존 문제:
+- 한 화면에 모든 카드(모델 설정, Cutoff, ROI/Val/Test, 메타데이터, sub-metric, reviewer note, 5개 평가 section, summary, interrater)가 stack — 평가자가 어디서 무엇을 해야 하는지 한눈에 보이지 않음
+- 모델 설정 / 평가 입력 / 결과 분석이라는 3 phase가 시각적으로 구분되지 않음
+- 평가 중에도 cutoff 표가 같이 보여 산만, 결과 분석할 때도 모델 설정 카드가 위에 있음
+
+### Cycle 1 — 3-tab 메인 뷰 (Setup / Evaluate / Results)
+- `<nav id="mainTabs">` — 헤더 바로 아래 큰 3-tab bar (icon + label + sub-label)
+- 모든 주요 카드/section에 `data-view="setup|evaluate|results"` 속성
+- CSS attribute selector + `body[data-active-view]`로 비활성 view 완전 hide (`display: none !important`)
+- `switchMainView(view)` JS: 활성 클래스 토글 + localStorage 영속화 + 스크롤 top
+- `loadReviewerEvaluation()` 호출 시 Setup view에 있으면 자동으로 Evaluate view로 전환 (사이드바 모델 클릭 → 바로 평가)
+
+**Why**: 3-phase mental model (설정 → 평가 → 분석)을 화면 구조로 직접 반영. Linear/Notion 같은 modern app의 segmented top-tab 패턴. 평가에 집중할 때 무관한 카드가 안 보이는 게 핵심.
+
+### Cycle 2 — Setup tab Hero + 그룹 라벨
+- 모델 핵심 정보(모델명, Notion, 평가 유형)를 별도 `.hero-card`로 분리
+- Hero input은 underline-only border, 17px / weight 600 (form 같지 않게)
+- Setup view 안에 group title — *"모델 환경"* / *"데이터 (ROI · 환자)"* (uppercase 11px 라벨)
+- Reviewer Note 카드는 Evaluate view로 이동 (모델 설정 단계가 아님)
+
+**Why**: Setup tab은 정보 hierarchy가 가장 중요한 곳. Hero로 "이 모델은 X" 정체성을 먼저 노출하고, 그 뒤로 환경/데이터 그룹을 stack. 모든 카드가 평등하게 나열되는 기존 구조보다 시각적 위계가 명확.
+
+### Cycle 3 — Evaluate tab context bar + section hover
+- `.eval-context-bar` — Evaluate view 상단에 sticky 느낌 컨텍스트 (모델명 / 평가자 이메일 · indication / Completeness 진행 / Usability 진행)
+- accent-soft 배경의 좌측 3px accent border — "지금 평가 모드" 시그널
+- `updateEvalContextBar()` JS: switchMainView + renderAll 시 자동 호출, 입력 시마다 cell 카운트 갱신
+- Section header의 *"📋 MD 복사"* 버튼을 `opacity: 0` + hover/focus 시 노출 — 자주 안 쓰는 보조 액션이라 항상 보일 필요 없음
+
+**Why**: 평가 중 "내가 누구로, 어떤 모델을, 얼마나 평가했는지"를 항상 노출. 진행도가 보이면 동기부여 + 부분 평가 후 돌아왔을 때 컨텍스트 회복이 빠름. MD 복사 같은 부가 버튼은 hover로 격리해서 inline UI 노이즈 감소.
+
+### Cycle 4 — Results hero stats + Sidebar polish
+- `.results-hero` — Results view 상단 4-col big number 카드 (ROI PASS% / 평가 완료% / 평가자 N / Fleiss κ 평균)
+- ROI PASS%는 80% 이상이면 success-green, 50% 미만이면 danger-red 자동 컬러링
+- κ 평균은 `renderInterraterAgreement()` 안에서 유효 ROI 평균으로 계산 후 hero에 push
+- Sidebar 모델 항목 active 시 accent-soft 배경 + 모델명 굵게 (단순 색 변경만이 아니라 명확한 selected state)
+
+**Why**: Results는 분석 phase — 큰 숫자 4개로 "PASS 잘 됐나 / 일치도 OK인가" 한눈에 판단. 기존엔 summary 표만 있어서 한참 읽어야 됐음. 사이드바는 모델 N개를 빠르게 switching하는 곳, active state가 명확해야 confusion 줄어듦.
+
+### 통합 효과
+- 한 뷰포트에 들어가는 카드 수: 10+개 → 평균 3-5개 (view마다)
+- 시각적 정보 위계: hero stat / 컨텍스트 바 / section 카드 / 보조 액션 (hover) 4단계로 분리
+- View persistence (localStorage) — 새로고침 후에도 마지막 view 복귀
+- data-view attribute selector 방식이라 모든 기존 컴포넌트 코드 그대로 — backwards compat 100%
+
+---
+
+## 2026-05-21 (오후) — 2차 자율 작업 (Cycle 6-10)
+
+### 동기
+1차 작업 직후 발견된 이슈와 사용자 피드백:
+- 사용자: *"cutoff는 어디로??"* — 카드가 collapsed 상태라 못 찾음 → default expanded로 변경 (hotfix)
+- 사용자: *"setup tab이 어디야?"* + *"처음에 보이는 듯 하다가 evaluate만 남아요"* — 탭 버튼들도 `data-view` 속성을 갖고 있어서 view-hide CSS 규칙이 자기 자신을 숨김. `:not(.main-tab)` 추가로 fix (hotfix)
+- 사용자: *"놀지말고 더 살펴보고 개선해봐"* — 2차 자율 작업 의뢰
+
+### Cycle 6 — Setup 카드 그룹 재배치
+- Setup tab 카드 순서를 의미 그룹별로 재정렬:
+  - **모델 환경** 그룹: Hero · Cutoff · Project Metadata · Sub-metric 라벨
+  - **데이터** 그룹: ROI / Validation / Test 3-col grid
+- Project Metadata와 Sub-metric은 평가 "데이터"가 아니라 모델 "환경" 정보 — 이전엔 데이터 그룹 아래에 있어 의미 위치가 어긋났음
+- Group title에 보조 라벨 추가 — "모델 환경 (평가 기준 · 메타데이터)" / "데이터 (ROI · 환자)" — uppercase 11px 메인 + 10px 흐린 보조
+
+**Why**: 같은 모델 설정 작업이라도 *언제* 만지는지가 다름 (cutoff/metadata는 모델 정의 시점, ROI/환자는 평가 데이터 추가 시점). 그룹화로 mental load 감소.
+
+### Cycle 7 — Header overflow menu
+- 헤더 우상단 secondary tools 5개 (📂📋🖨💾🗑)를 `⋯` 단일 버튼 + dropdown으로 통합
+- `.overflow-menu` — 280px min-width, 항목별 icon + label + 보조 설명 (예: "전체 MD 복사 — Notion 등에 붙여넣기")
+- 위험 액션(🗑 초기화)은 `oi-danger` 클래스로 빨간 톤
+- 메뉴 외부 클릭 + Esc 키로 자동 닫힘
+- 결과: 헤더에 보이는 액션이 8개 → 4개 (XLSX 다운로드 primary + 다크모드 + 로그인 + 더보기 ⋯)
+
+**Why**: 5개의 비슷한 icon 버튼이 일렬로 있으면 *어떤 게 어떤 기능인지* 알기 어려움. 사용 빈도가 매우 낮은 액션(JSON 백업, PDF 인쇄)은 한 단계 더 들어가도 OK. 더보기 메뉴에는 보조 설명을 같이 두어 hover/탐색 부담 해소.
+
+### Cycle 8 — Section header + hint 간소화
+- Section body의 verbose hint paragraph (`text-sm text-slate-600 mb-2`)를 통일된 `.section-hint` 스타일로 변경 (12px, 한 줄)
+- 본질 정보는 굵게, 보조 정보는 `.hint-aux`로 한 단계 더 흐리게
+- 예시: *"각 환자에서 ROI가 누락됐으면 체크하세요. (체크 = 누락, 빈칸 = 존재). xlsx에는 존재 셀이 - 로, 누락 셀이 빈칸으로 저장됩니다."*
+  → *"체크 = 누락 · 빈칸 = 존재 · XLSX에는 존재 셀이 `-`로 저장"*
+- `code` 인라인 태그도 더 작은 inline pill (background-muted)로 정제
+
+**Why**: Hint는 매번 읽지 않음 — 첫 한 번만 읽고 익숙해지면 시각적 노이즈. 핵심만 한 줄로 압축하고 부가설명은 흐리게. `· 점` 구분자로 시각적으로 짧게 분리.
+
+### Cycle 9 — Empty state onboarding
+- Setup tab 상단에 두 가지 onboarding 배너 추가:
+  - `#emptyStateBanner` — 로그인 + 모델 미선택 시 노출. "평가를 시작하려면 모델을 만드세요" + "＋ 새 모델 / 🔗 ID로 참여" 버튼 (사이드바 버튼으로 위임)
+  - `#signedOutHint` — 로그아웃 + 로컬 데이터 없음 시 노출. "로그인하면 클라우드 동기화 + 멀티 평가자 협업" + "Google 로그인" 버튼
+- `updateEmptyStateBanners()` JS — `updateAuthUI` + `switchMainView` 시 자동 호출
+- icon 박스 + title + sub-text + action button 구성 (accent-soft 배경 + 좌측 3px accent border)
+
+**Why**: 첫 진입 사용자에게 "다음에 뭘 해야 하는지" 명확하게 안내 — 이전엔 빈 Hero 카드가 나와도 어떻게 시작할지 모름. 사이드바 버튼은 발견하기 어려우니 본문에 큰 CTA를 둠.
+
+### Cycle 10 — Polish
+- Empty-state banner의 `linear-gradient(135deg, ...)` 제거 → flat `accent-soft` 배경 (1차 디자인 refresh의 "gradient 전면 제거" 원칙과 일관성 맞춤)
+- `.section-hint` + `.hint-aux` 스타일 통일 (이전엔 inline Tailwind 클래스로 산만)
+- Dark mode 토큰 점검 — 모든 신규 컴포넌트(overflow-menu, eval-context-bar, results-hero, empty-state-banner, hero-card)가 design token만 사용 → dark mode 자동 적용
+
+### 통합 효과 (Cycle 1-10 종합)
+- Setup view 진입 시 첫 view 정보 위계: empty-state CTA (있을 때) → Hero → 모델 환경 그룹 → 데이터 그룹
+- Evaluate view 진입 시: 컨텍스트 바 (모델/평가자/진행도) → reviewer note (접힘) → 평가 section (4개)
+- Results view 진입 시: 4-col big stats (PASS%·완료%·평가자·κ) → summary 표 → interrater
+- 헤더 button density: 8 → 4 visible buttons (overflow 5개 + 항상 4개)
+- 신규 사용자 onboarding pathway 명시화 — 빈 화면에서 새 모델 만들기까지 1 클릭
+
+### Cycle 11 — Header / footer trim
+- 헤더 subtitle 제거: *"ROI/환자 수를 자유롭게 조정하면서 CQA 결과를 입력하고 한 번에 xlsx로 내보냅니다."* — feature tagline은 첫 진입 후 redundant
+- 푸터 inline 정보 제거: *"로그인 시 Firestore 자동 동기화 · 로그아웃 시 브라우저 localStorage 저장"* — 한 번 알고 나면 매번 볼 필요 없음. 브랜드만 남김
+- `.app-header-title h1` — 18px font-size로 명시 통일 (이전 Tailwind 클래스에 분산)
+
+**Why**: 모든 페이지 전체에 항상 노출되는 "marketing copy" 톤은 매번 작업하는 사용자에겐 노이즈. 첫 진입 안내는 onboarding 배너로, 평가 컨텍스트는 context bar로 옮겼으므로 header 자체는 깔끔하게.
+
+### Cycle 12 — 진행률 제거 (사용자 피드백)
+- 사용자: *"평가 완료 퍼센트 표시는 의미가 없는것같은데 어떻게생각해?"* + Evaluate 컨텍스트 바의 진행 표시에 대해 *"그게 어디있는거죠?"* (= 발견조차 안 됨)
+- **Evaluate 컨텍스트 바**: `.ec-right` 진행도 2개 (Completeness / Usability filled/total) 완전 제거. 컨텍스트 바는 모델명 + 평가자 정보만.
+- **Results hero**: "평가 완료%" 카드 제거 → 3-col로 축소 (ROI PASS / 평가자 / Fleiss κ)
+
+**Why**: 두 진행률 모두 misleading —
+1. **Completeness 진행**: GTV default=TP, OAR default=존재이므로 negative 표시한 셀 수만 카운트됨. 사용자는 "내가 얼마나 평가했는지"로 해석하는데 실제로는 *negative judgement 개수*만 보여 직관과 반대.
+2. **Usability 완료%**: 평가는 모든 셀을 한 번씩 보고 결정하는 게 정상이라 100%가 default 도달점. "75% 완료"는 진행이 아니라 *덜 함*. 진행 상태로서 의미 없음.
+3. **Results 상단 PASS/FAIL 위계와 충돌**: "평가 완료%"가 ROI PASS%와 같은 카드 위계라 마치 결과 지표인 듯 오해 유발.
+
+사용자가 진행 표시를 "어디 있냐"고 물어본 것 자체가 "발견 안 됨 = 필요 없음"의 증거. 잔여 셀 카운트 형태로도 고려했지만 사용 사례 검증 후 추가 결정.
 
 

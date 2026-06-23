@@ -608,6 +608,10 @@ async function loadReviewerEvaluation(modelId, reviewerUid) {
     currentReviewerId = reviewerUid;
     currentReadOnly = reviewerUid !== currentUser.uid;
     try { localStorage.setItem(LAST_PROJECT_LS_KEY(currentUser.uid), modelId); } catch(e) {}
+    // 모델/평가자 선택 시 자동으로 Evaluate view 전환 (단 현재 Results면 유지)
+    if (document.body.dataset.activeView === 'setup') {
+      switchMainView('evaluate', { scrollTop: false });
+    }
     // 다른 reviewer 평가에 빠르게 접근하도록 자동 expand + 평가자 list lazy fetch
     if (!expandedModels.has(modelId)) {
       expandedModels.add(modelId);
@@ -1049,9 +1053,14 @@ async function renderInterraterAgreement() {
   target.innerHTML = '<p class="text-sm text-slate-500">불러오는 중…</p>';
   const reviewers = await fetchAllReviewersFull(currentProjectId);
   const n = reviewers.length;
+  // Hero stats: 평가자 수만 먼저 채움
+  const rhRev = el('rhReviewers'); if (rhRev) rhRev.textContent = n;
+  const rhRevSub = el('rhReviewersSub'); if (rhRevSub) rhRevSub.textContent = n > 0 ? `${n}명 평가 완료` : '평가 시작 전';
   if (n < 2) {
     target.innerHTML = `<p class="text-sm text-slate-500">현재 모델 평가자 ${n}명. 2명 이상의 평가가 있을 때 Fleiss κ를 계산합니다.</p>`;
     if (status) status.textContent = `평가자 ${n}명`;
+    const rhKE = el('rhKappa'); if (rhKE) rhKE.textContent = 'N/A';
+    const rhKS = el('rhKappaSub'); if (rhKS) rhKS.textContent = '평가자 2명 이상 필요';
     return;
   }
   if (status) status.textContent = `평가자 ${n}명 · Fleiss κ`;
@@ -1096,6 +1105,23 @@ async function renderInterraterAgreement() {
     }
   });
   html += `</tbody></table>`;
+
+  // Hero stats: 평균 κ (유효 ROI만)
+  const validKappas = roiKappas.filter(r => r.kappa !== null);
+  const avgKappa = validKappas.length > 0
+    ? validKappas.reduce((s, r) => s + r.kappa, 0) / validKappas.length
+    : null;
+  const rhKE = el('rhKappa');
+  if (rhKE) rhKE.textContent = avgKappa !== null ? avgKappa.toFixed(2) : 'N/A';
+  const rhKS = el('rhKappaSub');
+  if (rhKS) {
+    if (avgKappa !== null) {
+      const lbl = kappaLabel(avgKappa);
+      rhKS.textContent = `${lbl.text} · ${validKappas.length} ROI 평균`;
+    } else {
+      rhKS.textContent = '유효 ROI 없음';
+    }
+  }
 
   // Sub-metric별 specs 일치도
   html += `<h4 class="text-xs font-semibold text-slate-500 mt-5 mb-2" style="letter-spacing:0.06em">3-6 SPECIFICATIONS 체크 일치도 (sub-metric별, ROI 통합)</h4>`;
@@ -1306,6 +1332,21 @@ function updateAuthUI(user) {
     el('btnSidebarOpen').classList.add('hidden');
     setSyncStatus('offline', '로컬 모드');
   }
+  updateEmptyStateBanners();
+}
+
+// Setup tab 상단 onboarding 배너 — 로그인 / 모델 선택 여부에 따라 노출
+function updateEmptyStateBanners() {
+  const emptyBanner = el('emptyStateBanner');
+  const signedOutHint = el('signedOutHint');
+  if (!emptyBanner || !signedOutHint) return;
+  const loggedIn = !!currentUser;
+  const hasProject = !!currentProjectId;
+  // 로그인했지만 모델 선택 안 함 → 새 모델 만들기 CTA
+  emptyBanner.classList.toggle('hidden', !(loggedIn && !hasProject));
+  // 로그아웃 상태 → 로그인 hint (단, 로컬 데이터가 이미 있으면 hide — 사용 중인 셈)
+  const hasLocalData = state.rois?.length > 0 || state.validations?.length > 0;
+  signedOutHint.classList.toggle('hidden', loggedIn || hasLocalData);
 }
 
 function syncSidebarOpenBtn() {
@@ -1657,6 +1698,14 @@ function setupAddForms() {
   el('roiAddForm').onsubmit = (e) => { e.preventDefault(); const v = el('roiAddInput').value.trim(); if (v) { state.rois.push(v); state.roiCutoffs.push('A'); el('roiAddInput').value = ''; saveState(); renderAll(); } };
   el('valAddForm').onsubmit = (e) => { e.preventDefault(); const v = el('valAddInput').value.trim(); if (v) { state.validations.push(v); el('valAddInput').value = ''; saveState(); renderAll(); } };
   el('testAddForm').onsubmit = (e) => { e.preventDefault(); const v = el('testAddInput').value.trim(); if (v) { state.tests.push(v); el('testAddInput').value = ''; saveState(); renderAll(); } };
+  el('roiBulkBtn').onclick = () => {
+    const input = prompt('ROI 이름을 콤마나 줄바꿈으로 구분해 입력하세요. (Cutoff는 A로 추가됨)');
+    if (!input) return;
+    const arr = input.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+    state.rois.push(...arr);
+    arr.forEach(() => state.roiCutoffs.push('A'));
+    saveState(); renderAll();
+  };
   el('valBulkBtn').onclick = () => {
     const input = prompt('환자 ID를 콤마나 줄바꿈으로 구분해 입력하세요.');
     if (!input) return;
@@ -1724,6 +1773,49 @@ function setupAddForms() {
 function toggleCard(headerEl) {
   const card = headerEl.closest('.card.collapsible');
   if (card) card.classList.toggle('collapsed');
+}
+
+// Main view switching (Setup / Evaluate / Results)
+function switchMainView(view, opts) {
+  opts = opts || {};
+  if (!['setup', 'evaluate', 'results'].includes(view)) view = 'setup';
+  document.body.dataset.activeView = view;
+  document.querySelectorAll('.main-tab').forEach(t => {
+    const isActive = t.dataset.view === view;
+    t.classList.toggle('active', isActive);
+    t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+  if (!opts.skipPersist) {
+    try { localStorage.setItem('cqa_active_view', view); } catch(e) {}
+  }
+  // 페이지 상단으로 스크롤 (view 전환 시 직관)
+  if (opts.scrollTop !== false) window.scrollTo({ top: 0, behavior: 'instant' });
+  if (view === 'evaluate') updateEvalContextBar();
+}
+
+// Evaluate tab 상단 context bar — 현재 평가 모델 / reviewer 정보
+function updateEvalContextBar() {
+  const nameEl = el('ecModelName'); if (!nameEl) return;
+  const project = userProjects.find(p => p.id === currentProjectId);
+  const modelName = project?.name || state.projectName || '— 모델 선택 —';
+  nameEl.textContent = modelName;
+
+  const rEl = el('ecReviewer');
+  if (rEl) {
+    let reviewerLabel = '사이드바에서 모델을 선택하세요';
+    if (currentProjectId) {
+      const indicLabel = state.indicationCategory === 'GTV' ? 'GTV' : (state.indicationCategory === 'OAR' ? 'OAR' : '—');
+      if (currentReadOnly) {
+        if (project?._legacy) reviewerLabel = `🔒 Legacy · ${indicLabel}`;
+        else if (currentReviewerId && currentReviewerId !== currentUser?.uid) reviewerLabel = `🔒 다른 평가자 보기 · ${indicLabel}`;
+        else reviewerLabel = `🔒 읽기 전용 · ${indicLabel}`;
+      } else {
+        const meEmail = currentUser?.email || '내 평가';
+        reviewerLabel = `${meEmail} · ${indicLabel}`;
+      }
+    }
+    rEl.textContent = reviewerLabel;
+  }
 }
 
 function toggleSection(btn) {
@@ -2251,6 +2343,25 @@ function renderAll() {
   // tooltip 갱신
   const anchor = el('usabilityAnchor');
   if (anchor) anchor.textContent = '1-5 anchor — ' + getUsabilityAnchor();
+  if (document.body.dataset.activeView === 'evaluate') updateEvalContextBar();
+  if (document.body.dataset.activeView === 'results') updateResultsHero();
+  updateEmptyStateBanners();
+}
+
+// Results tab 상단 hero stats — ROI PASS / 평가자 / κ (3-col)
+function updateResultsHero() {
+  const passEl = el('rhRoiPass'); if (!passEl) return;
+  const us = computeUsabilityStats();
+  const totalRois = state.rois?.length || 0;
+  const passCount = us.filter(u => u.pass === 'PASS').length;
+  const failCount = us.filter(u => u.pass === 'FAIL').length;
+
+  const passPct = totalRois > 0 ? Math.round(passCount / totalRois * 100) : 0;
+  passEl.textContent = totalRois > 0 ? `${passPct}%` : '—';
+  passEl.parentElement.classList.toggle('pass', totalRois > 0 && passPct >= 80);
+  passEl.parentElement.classList.toggle('fail', totalRois > 0 && passPct < 50);
+  const passSub = el('rhRoiPassSub');
+  if (passSub) passSub.textContent = totalRois > 0 ? `${passCount} pass · ${failCount} fail · ${totalRois - passCount - failCount} N/A` : 'ROI · Cutoff 필요';
 }
 
 // Project metadata 카드 (modality / stage / version / negative flag) 동기화
@@ -2981,6 +3092,16 @@ function init() {
   };
   el('btnExportPdf').onclick = exportPDF;
 
+  // Main view tabs
+  document.querySelectorAll('.main-tab').forEach(t => {
+    t.onclick = () => switchMainView(t.dataset.view);
+  });
+  // 초기 active view 복원
+  try {
+    const saved = localStorage.getItem('cqa_active_view');
+    switchMainView(saved || 'setup', { skipPersist: true, scrollTop: false });
+  } catch(e) { switchMainView('setup', { skipPersist: true, scrollTop: false }); }
+
   // 사이드바 토글
   el('btnSidebarToggle').onclick = toggleSidebar;
   el('btnSidebarOpen').onclick = toggleSidebar;
@@ -2993,6 +3114,33 @@ function init() {
   // 테마 토글 (초기값은 head에서 이미 적용됨)
   el('btnTheme').onclick = toggleTheme;
   syncThemeButtonTitle();
+
+  // Overflow menu (header secondary tools)
+  const overflowBtn = el('btnOverflow');
+  const overflowMenu = el('overflowMenu');
+  if (overflowBtn && overflowMenu) {
+    const closeMenu = () => {
+      overflowMenu.classList.add('hidden');
+      overflowBtn.setAttribute('aria-expanded', 'false');
+    };
+    overflowBtn.onclick = (e) => {
+      e.stopPropagation();
+      const isOpen = !overflowMenu.classList.contains('hidden');
+      if (isOpen) { closeMenu(); return; }
+      overflowMenu.classList.remove('hidden');
+      overflowBtn.setAttribute('aria-expanded', 'true');
+    };
+    document.addEventListener('click', (e) => {
+      if (!overflowMenu.contains(e.target) && e.target !== overflowBtn) closeMenu();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeMenu();
+    });
+    // 메뉴 항목 클릭 시 자동 close
+    overflowMenu.querySelectorAll('.overflow-item').forEach(item => {
+      item.addEventListener('click', () => setTimeout(closeMenu, 0));
+    });
+  }
 
   // 클라우드 / 인증 wiring
   el('btnSignIn').onclick = handleSignIn;
@@ -3015,6 +3163,14 @@ function init() {
     if (pendingDirty) await flushCloudSave();
     await joinCloudProject(projectId.trim());
   };
+
+  // Empty-state banner의 미러 버튼 — sidebar 버튼으로 위임
+  const btnEmptyNew = el('btnEmptyNew');
+  if (btnEmptyNew) btnEmptyNew.onclick = () => el('btnNewProject').click();
+  const btnEmptyJoin = el('btnEmptyJoin');
+  if (btnEmptyJoin) btnEmptyJoin.onclick = () => el('btnJoinProject').click();
+  const btnSignedOutSignIn = el('btnSignedOutSignIn');
+  if (btnSignedOutSignIn) btnSignedOutSignIn.onclick = handleSignIn;
 
   window.addEventListener('beforeunload', () => {
     if (pendingDirty) { try { flushCloudSave(); } catch(e) {} }
