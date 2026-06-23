@@ -1823,6 +1823,7 @@ function switchMainView(view, opts) {
   // 페이지 상단으로 스크롤 (view 전환 시 직관)
   if (opts.scrollTop !== false) window.scrollTo({ top: 0, behavior: 'instant' });
   if (view === 'evaluate') updateEvalContextBar();
+  if (view === 'results') updateResultsHero();   // 탭 전환만으로도 ROI PASS 등 hero 갱신
 }
 
 // Evaluate tab 상단 context bar — 현재 평가 모델 / reviewer 정보
