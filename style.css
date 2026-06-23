@@ -461,6 +461,22 @@ textarea.plain { line-height: 1.5; resize: vertical; }
   background: var(--warning-soft) !important;
   box-shadow: inset 3px 0 0 var(--warning);
 }
+
+/* ===== Usability 일괄/선택 채우기 툴바 ===== */
+.us-bulk-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.us-sel-bar { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-left: 12px; border-left: 1px solid var(--border); }
+.us-sel-count { font-size: 12px; font-weight: 600; color: var(--accent); white-space: nowrap; }
+.us-sel-hint { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+.us-sel-score { width: 48px; text-align: center; font-size: 13px; padding: 3px 4px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg-card); color: var(--text-default); }
+.btn-link.active { color: var(--accent); font-weight: 700; }
+/* 선택 모드: 셀 input 비활성 + 선택 가능 영역에 pointer */
+#usabilityGrid.us-selecting .us-inp { pointer-events: none; }
+#usabilityGrid.us-selecting .c[data-vi][data-ri]:not(.missing),
+#usabilityGrid.us-selecting .c.h[data-ri],
+#usabilityGrid.us-selecting .c.rh[data-vi] { cursor: pointer; }
+#usabilityGrid.us-selecting .c[data-vi][data-ri]:not(.missing):hover { outline: 1px dashed var(--accent); outline-offset: -2px; }
+/* 선택된 셀: score 배경(!important)을 덮지 못해도 보이도록 inset ring */
+.g > .c.cell-sel { box-shadow: inset 0 0 0 2px var(--accent); background: var(--accent-soft); }
 .prog-bar {
   width: 44px; height: 6px; background: var(--border);
   border-radius: var(--r-pill); overflow: hidden;

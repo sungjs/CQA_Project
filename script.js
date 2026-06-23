@@ -1718,6 +1718,35 @@ function setupAddForms() {
     const arr = input.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
     state.tests.push(...arr); saveState(); renderAll();
   };
+  el('usBulkBtn').onclick = () => {
+    const V = state.validations.length, R = state.rois.length;
+    if (V === 0 || R === 0) { alert('Validation 환자와 ROI를 먼저 추가하세요.'); return; }
+    const input = prompt('빈 셀을 채울 Usability 점수(1-5)를 입력하세요. 이미 입력된 점수는 유지됩니다.');
+    if (input === null) return;
+    const { value, valid } = validateScoreInput(input);
+    if (!valid || value === '') { alert('1~5 사이의 점수를 입력하세요.'); return; }
+    let filled = 0;
+    for (let vi = 0; vi < V; vi++) {
+      for (let ri = 0; ri < R; ri++) {
+        if (isUnscoreable(vi, ri)) continue;        // ❌ 채점 불가 셀 skip
+        if (getCell(state.usability, vi, ri)) continue; // 기존 점수 보존
+        setCell(state.usability, vi, ri, value); filled++;
+      }
+    }
+    if (filled === 0) { alert('채울 빈 셀이 없습니다.'); return; }
+    saveState();
+    renderUsabilityGrid(); renderSpecsGrid(); renderSummaryView();
+  };
+  el('usSelectBtn').onclick = () => {
+    if ((state.validations.length === 0 || state.rois.length === 0) && !usSelectMode) {
+      alert('Validation 환자와 ROI를 먼저 추가하세요.'); return;
+    }
+    setUsSelectMode(!usSelectMode);
+  };
+  el('usSelAllBtn').onclick = () => { selectAllUsCells(); reapplyUsSel(el('usabilityGrid')); updateUsSelCount(); };
+  el('usSelClearBtn').onclick = () => { usSelected.clear(); reapplyUsSel(el('usabilityGrid')); updateUsSelCount(); };
+  el('usSelFillBtn').onclick = fillSelectedUsability;
+  el('usSelScore').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); fillSelectedUsability(); } };
   el('projectName').oninput = (e) => { state.projectName = e.target.value; saveState(); };
   el('notionLink').oninput = (e) => { state.notionLink = e.target.value; saveState(); };
   document.querySelectorAll('input[name="indicationCategory"]').forEach(r => {
@@ -1969,22 +1998,79 @@ function validateScoreInput(val) {
   return { value: s, valid: false };
 }
 
+// ===== Usability 셀 선택 (선택된 셀 중 빈 칸 일괄 채우기) =====
+let usSelectMode = false;
+const usSelected = new Set();
+const usKey = (vi, ri) => vi + ':' + ri;
+
+function setUsSelectMode(on) {
+  usSelectMode = on;
+  if (!on) usSelected.clear();
+  const bar = el('usSelectBar'); if (bar) bar.style.display = on ? '' : 'none';
+  const btn = el('usSelectBtn');
+  if (btn) { btn.classList.toggle('active', on); btn.textContent = on ? '✕ 선택 종료' : '🖱 셀 선택'; }
+  renderUsabilityGrid();
+  updateUsSelCount();
+}
+function updateUsSelCount() {
+  const elc = el('usSelCount'); if (elc) elc.textContent = usSelected.size + '칸 선택';
+}
+function reapplyUsSel(c) {
+  c.querySelectorAll('.c[data-vi][data-ri]').forEach(cell => {
+    cell.classList.toggle('cell-sel', usSelected.has(usKey(+cell.dataset.vi, +cell.dataset.ri)));
+  });
+}
+// 한 열/행의 채점 가능한 셀 인덱스 모음
+function usScoreableInCol(ri) {
+  const out = []; for (let vi = 0; vi < state.validations.length; vi++) if (!isUnscoreable(vi, ri)) out.push(vi); return out;
+}
+function usScoreableInRow(vi) {
+  const out = []; for (let ri = 0; ri < state.rois.length; ri++) if (!isUnscoreable(vi, ri)) out.push(ri); return out;
+}
+// 전체가 이미 선택돼 있으면 해제, 아니면 전부 선택 (토글)
+function toggleUsGroup(pairs) {
+  const allSel = pairs.length > 0 && pairs.every(([vi, ri]) => usSelected.has(usKey(vi, ri)));
+  pairs.forEach(([vi, ri]) => { const k = usKey(vi, ri); if (allSel) usSelected.delete(k); else usSelected.add(k); });
+}
+function selectAllUsCells() {
+  usSelected.clear();
+  for (let vi = 0; vi < state.validations.length; vi++)
+    for (let ri = 0; ri < state.rois.length; ri++)
+      if (!isUnscoreable(vi, ri)) usSelected.add(usKey(vi, ri));
+}
+function fillSelectedUsability() {
+  const scoreEl = el('usSelScore');
+  const { value, valid } = validateScoreInput(scoreEl ? scoreEl.value : '');
+  if (!valid || value === '') { alert('1~5 사이의 점수를 입력하세요.'); return; }
+  if (usSelected.size === 0) { alert('먼저 채울 셀을 선택하세요.'); return; }
+  let filled = 0;
+  usSelected.forEach(k => {
+    const [vi, ri] = k.split(':').map(Number);
+    if (isUnscoreable(vi, ri)) return;
+    if (getCell(state.usability, vi, ri)) return; // 빈 칸만
+    setCell(state.usability, vi, ri, value); filled++;
+  });
+  if (filled === 0) { alert('선택된 셀 중 빈 칸이 없습니다. (기존 점수는 덮어쓰지 않음)'); return; }
+  saveState();
+  renderUsabilityGrid(); renderSpecsGrid(); renderSummaryView();
+}
+
 function renderUsabilityGrid() {
   const c = el('usabilityGrid');
   const V = state.validations.length, R = state.rois.length;
   if (V === 0 || R === 0) return c.innerHTML = '<p class="p-4 text-slate-400 text-sm">Validation과 ROI를 먼저 추가하세요.</p>';
   let html = openGrid(R, 1);
   html += `<div class="c h rh">PatientID</div>`;
-  state.rois.forEach(roi => html += `<div class="c h">${esc(roi)}</div>`);
+  state.rois.forEach((roi, ri) => html += `<div class="c h" data-ri="${ri}">${esc(roi)}</div>`);
   html += `<div class="c h cm">Comment</div>`;
   state.validations.forEach((v, vi) => {
-    html += `<div class="c rh">${esc(v)}</div>`;
+    html += `<div class="c rh" data-vi="${vi}">${esc(v)}</div>`;
     state.rois.forEach((roi, ri) => {
-      if (isUnscoreable(vi, ri)) html += `<div class="c missing">❌</div>`;
+      if (isUnscoreable(vi, ri)) html += `<div class="c missing" data-vi="${vi}" data-ri="${ri}">❌</div>`;
       else {
         const sv = getCell(state.usability, vi, ri) || '';
         const sc = sv ? (+sv <= 2 ? ' score-low' : +sv === 3 ? ' score-mid' : '') : '';
-        html += `<div class="c${sc}"><input type="text" inputmode="numeric" maxlength="1" data-vi="${vi}" data-ri="${ri}" class="us-inp" value="${esc(sv)}" placeholder="·" /></div>`;
+        html += `<div class="c${sc}" data-vi="${vi}" data-ri="${ri}"><input type="text" inputmode="numeric" maxlength="1" data-vi="${vi}" data-ri="${ri}" class="us-inp" value="${esc(sv)}" placeholder="·" /></div>`;
       }
     });
     html += `<div class="c cm"><input type="text" data-vi="${vi}" class="us-comment" value="${esc(state.usabilityComment[vi] || '')}" /></div>`;
@@ -2022,6 +2108,29 @@ function renderUsabilityGrid() {
     inp.onkeydown = handleGridKeyNav;
   });
   c.querySelectorAll('.us-comment').forEach(inp => { inp.oninput = (e) => { state.usabilityComment[+e.target.dataset.vi] = e.target.value; saveState(); }; });
+
+  // 선택 모드: input 클릭 비활성 + 기존 선택 표시 + 클릭 위임
+  c.classList.toggle('us-selecting', usSelectMode);
+  if (usSelectMode) reapplyUsSel(c);
+  c.onclick = (e) => {
+    if (!usSelectMode) return;
+    const colH = e.target.closest('.c.h[data-ri]');
+    const rowH = e.target.closest('.c.rh[data-vi]');
+    const cell = e.target.closest('.c[data-vi][data-ri]');
+    if (cell) {                                  // 개별 채점 셀 (헤더는 data-vi/data-ri 둘 다 없음)
+      if (cell.classList.contains('missing')) return;
+      const vi = +cell.dataset.vi, ri = +cell.dataset.ri, k = usKey(vi, ri);
+      if (usSelected.has(k)) usSelected.delete(k); else usSelected.add(k);
+      cell.classList.toggle('cell-sel', usSelected.has(k));
+      updateUsSelCount();
+    } else if (colH) {                           // ROI 열 헤더 → 열 전체 토글
+      toggleUsGroup(usScoreableInCol(+colH.dataset.ri).map(vi => [vi, +colH.dataset.ri]));
+      reapplyUsSel(c); updateUsSelCount();
+    } else if (rowH) {                           // 환자 행 헤더 → 행 전체 토글
+      toggleUsGroup(usScoreableInRow(+rowH.dataset.vi).map(ri => [+rowH.dataset.vi, ri]));
+      reapplyUsSel(c); updateUsSelCount();
+    }
+  };
 }
 
 function updateUsabilityStatsRow() {
