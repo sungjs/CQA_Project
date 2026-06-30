@@ -81,21 +81,22 @@
  * data-theme="dark" 수동 토글 (script.js init에서 prefers 자동 감지)
  * ================================================================ */
 :root[data-theme="dark"] {
-  --bg-app:        #0d1117;
-  --bg-card:       #161b22;
-  --bg-subtle:     #1c2128;
-  --bg-muted:      #22272e;
-  --bg-emphasis:   #2d333b;
+  /* near-black 대신 soft slate "dim" — 눈부심/대비 완화 (2026-06-30) */
+  --bg-app:        #181c23;
+  --bg-card:       #21262e;
+  --bg-subtle:     #262b34;
+  --bg-muted:      #2d333c;
+  --bg-emphasis:   #3a414c;
 
   --text-strong:   #f0f3f6;
   --text-default:  #cdd2d7;
   --text-muted:    #9aa3ad;
-  --text-subtle:   #7d8590;
-  --text-faint:    #545d68;
+  --text-subtle:   #8b94a0;
+  --text-faint:    #5c6672;
 
-  --border-soft:   #1c2128;
-  --border:        #2d333b;
-  --border-strong: #444c56;
+  --border-soft:   #262b34;
+  --border:        #353c46;
+  --border-strong: #4d5663;
 
   --accent:        #818cf8;
   --accent-strong: #6366f1;
@@ -855,6 +856,7 @@ body.authed #loginScreen, body.local-fallback #loginScreen { display: none; }
   flex: 1 1 54%;
   display: flex; align-items: center; justify-content: center;
   padding: 40px 32px;
+  background: var(--bg-card);   /* bg-app보다 한 톤 밝게 — 다크에서 허전함 완화 */
 }
 .login-card { width: 100%; max-width: 372px; }
 .login-card-title { font-size: 22px; font-weight: 700; color: var(--text-strong); margin: 0; letter-spacing: -0.01em; }
