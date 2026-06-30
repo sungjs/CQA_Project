@@ -861,10 +861,10 @@ function renderProjectPicker() {
     else if (p.owner !== currentUser?.uid) tag = ' · <span class="shared-tag">공유</span>';
     // Metadata badges (modality, stage, reviewer count)
     const badges = [];
-    // Reviewer count badge (cache에 있을 때만 — 모델을 한 번 연 뒤 표시)
+    // Reviewer count badge — 평가자가 2명 이상일 때만 (나 혼자면 의미 없어 숨김)
     const cachedReviewers = modelReviewersCache.get(p.id);
-    if (cachedReviewers && cachedReviewers.length > 0) {
-      badges.push(`<span class="meta-badge meta-badge-reviewers" title="${cachedReviewers.length}명 평가 — 열고 상단에서 평가자 전환">👥 ${cachedReviewers.length}</span>`);
+    if (cachedReviewers && cachedReviewers.length > 1) {
+      badges.push(`<span class="meta-badge meta-badge-reviewers" title="${cachedReviewers.length}명 평가 — 모델 아래에서 평가자 전환">👥 ${cachedReviewers.length}</span>`);
     }
     if (p.modality) badges.push(`<span class="meta-badge" title="Modality">${esc(p.modality)}</span>`);
     if (p.evaluationStage) badges.push(`<span class="meta-badge" title="Stage">${esc(p.evaluationStage)}</span>`);
