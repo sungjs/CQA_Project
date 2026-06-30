@@ -277,6 +277,28 @@ button { font-family: inherit; }
   content: ''; position: absolute; left: 0; top: 0; bottom: 0;
   width: 3px; background: var(--danger);
 }
+/* OAR completeness 3-state 셀 (존재 / 누락 / N/A FOV 밖) */
+.g > .c.comp-cell {
+  cursor: pointer; font-size: 11px; font-weight: 600;
+  user-select: none; position: relative;
+  transition: background var(--tx-fast), outline var(--tx-fast);
+}
+.g > .c.comp-cell.comp-exists { color: var(--text-faint); }
+.g > .c.comp-cell.comp-exists::after { content: '·'; color: var(--border-strong); }
+.g > .c.comp-cell.comp-miss {
+  background: var(--danger-soft); color: var(--danger-text);
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+.g > .c.comp-cell.comp-na {
+  background: var(--bg-emphasis); color: var(--text-muted);
+  box-shadow: inset 3px 0 0 var(--border-strong);
+}
+.g > .c.comp-cell:hover { outline: 1px solid var(--accent); outline-offset: -2px; }
+.g > .c.h.comp-col { cursor: pointer; }
+.g > .c.h.comp-col:hover { background: var(--bg-emphasis); color: var(--text-strong); }
+/* Usability 그리드의 N/A 셀 — 누락(❌)과 색 구분 */
+.g > .c.missing.comp-na { background: var(--bg-emphasis); color: var(--text-muted); font-weight: 600; }
+.g > .c.missing.comp-na::before { background: var(--border-strong); }
 .g > .c.stat {
   background: var(--bg-subtle); font-weight: 500;
   color: var(--text-muted); font-size: 12px;
@@ -1341,6 +1363,24 @@ body[data-active-view="setup"] .setup-section-title:first-of-type { margin-top: 
   font-weight: 700;
   color: var(--accent-text);
   font-size: 16px;
+}
+/* 평가자 전환 드롭다운 (컨텍스트 바 우측) */
+.eval-context-bar .ec-right { align-items: center; gap: 8px; }
+.eval-context-bar .ec-switch-label {
+  font-size: 11px; font-weight: 600; color: var(--text-faint);
+  letter-spacing: 0.04em; white-space: nowrap;
+}
+.ec-reviewer-select {
+  font-size: 12.5px; padding: 5px 8px;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--bg-card); color: var(--text-default);
+  max-width: 220px; cursor: pointer;
+}
+.ec-reviewer-select:hover { border-color: var(--border-strong); }
+/* read-only(다른 평가자 보기 등)에서도 평가자 전환은 가능해야 함 */
+body.read-only #appMain select#ecReviewerSelect {
+  pointer-events: auto; cursor: pointer;
+  background: var(--bg-card) !important; color: var(--text-default) !important;
 }
 
 /* Section header — MD 복사 버튼은 hover 시에만 (clutter 감소) */

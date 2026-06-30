@@ -250,7 +250,18 @@ function isUnscoreable(vi, ri) {
     const s = getCompState4(vi, ri);
     return s === 'FN' || s === 'TN'; // AI 추론 없음 → 점수 불가
   }
-  return getCell(state.completeness, vi, ri) === true; // OAR: missing
+  const c = getCell(state.completeness, vi, ri);
+  return c === true || c === 'na'; // OAR: 누락(FN) 또는 FOV 밖(N/A) → 점수 불가
+}
+
+// OAR completeness 셀 3-state: 'exists' | 'missing' | 'na'(FOV 밖)
+const OAR_STATE_NEXT = { exists: 'missing', missing: 'na', na: 'exists' };
+function getOarState(vi, ri) {
+  const c = getCell(state.completeness, vi, ri);
+  return c === 'na' ? 'na' : (c === true ? 'missing' : 'exists');
+}
+function setOarState(vi, ri, st) {
+  setCell(state.completeness, vi, ri, st === 'missing' ? true : st === 'na' ? 'na' : false);
 }
 
 // ===== Schema migration — single source of truth =====
@@ -614,17 +625,19 @@ async function loadReviewerEvaluation(modelId, reviewerUid) {
     if (document.body.dataset.activeView === 'setup') {
       switchMainView('evaluate', { scrollTop: false });
     }
-    // 다른 reviewer 평가에 빠르게 접근하도록 자동 expand + 평가자 list lazy fetch
+    // 평가자 목록 lazy fetch → badge + 상단 평가자 전환 드롭다운 채움 (모델당 1회 안내)
     if (!expandedModels.has(modelId)) {
       expandedModels.add(modelId);
       fetchModelReviewers(modelId).then((reviewers) => {
+        modelReviewersCache.set(modelId, reviewers);
         renderProjectPicker();
+        buildReviewerSwitcher();
         // 본인 평가가 비어있고 다른 평가자가 있으면 안내 toast (한 번만)
         const isSelfEmpty = reviewerUid === currentUser.uid && !rSnap.exists;
         const others = (reviewers || []).filter(r => r.uid !== currentUser.uid);
         if (isSelfEmpty && others.length > 0) {
           const names = others.map(r => (r.reviewerEmail || r.uid).split('@')[0]).slice(0, 3).join(', ');
-          toast('info', `이 모델에 동료 ${others.length}명의 평가가 있습니다 (${names}). 사이드바에서 평가자 이름을 클릭하면 그들의 점수를 볼 수 있어요.`, { duration: 8000 });
+          toast('info', `이 모델에 동료 ${others.length}명의 평가가 있습니다 (${names}). 상단 '평가자 보기' 드롭다운에서 선택하면 그들의 점수를 볼 수 있어요.`, { duration: 8000 });
         }
       }).catch(() => {});
     }
@@ -841,20 +854,6 @@ function renderProjectPicker() {
     const row = document.createElement('div');
     row.className = 'model-row';
 
-    if (p._legacy) {
-      const lock = document.createElement('span');
-      lock.className = 'chevron chevron-disabled';
-      lock.textContent = '🔒';
-      row.appendChild(lock);
-    } else {
-      const chevron = document.createElement('button');
-      chevron.type = 'button';
-      chevron.className = 'chevron';
-      chevron.textContent = expandedModels.has(p.id) ? '▼' : '▶';
-      chevron.onclick = (e) => { e.stopPropagation(); toggleModelExpand(p.id); };
-      row.appendChild(chevron);
-    }
-
     const nameWrap = document.createElement('div');
     nameWrap.className = 'model-name-wrap';
     const time = formatRelativeTime(p.updatedAt);
@@ -863,11 +862,10 @@ function renderProjectPicker() {
     else if (p.owner !== currentUser?.uid) tag = ' · <span class="shared-tag">공유</span>';
     // Metadata badges (modality, stage, reviewer count)
     const badges = [];
-    // Reviewer count badge (cache에 있을 때만)
+    // Reviewer count badge (cache에 있을 때만 — 모델을 한 번 연 뒤 표시)
     const cachedReviewers = modelReviewersCache.get(p.id);
     if (cachedReviewers && cachedReviewers.length > 0) {
-      const others = cachedReviewers.filter(r => r.uid !== currentUser?.uid).length;
-      if (others > 0) badges.push(`<span class="meta-badge meta-badge-reviewers" title="${cachedReviewers.length}명 평가자 — 펼쳐서 보기">👥 ${cachedReviewers.length}</span>`);
+      badges.push(`<span class="meta-badge meta-badge-reviewers" title="${cachedReviewers.length}명 평가 — 열고 상단에서 평가자 전환">👥 ${cachedReviewers.length}</span>`);
     }
     if (p.modality) badges.push(`<span class="meta-badge" title="Modality">${esc(p.modality)}</span>`);
     if (p.evaluationStage) badges.push(`<span class="meta-badge" title="Stage">${esc(p.evaluationStage)}</span>`);
@@ -878,10 +876,7 @@ function renderProjectPicker() {
       if (p._legacy) {
         if (p.id !== currentProjectId) loadProjectFromCloud(p.id);
       } else {
-        // 모델명 클릭 = 내 평가 로드
-        if (p.id !== currentProjectId || currentReviewerId !== currentUser?.uid) {
-          loadReviewerEvaluation(p.id, currentUser.uid);
-        }
+        openModel(p.id);   // 내 평가 우선, 없으면 최신 평가
       }
     };
     row.appendChild(nameWrap);
@@ -915,54 +910,22 @@ function renderProjectPicker() {
       row.appendChild(actions);
     }
     li.appendChild(row);
-
-    // 펼친 상태이고 legacy가 아니면 평가자 리스트
-    if (!p._legacy && expandedModels.has(p.id)) {
-      const reviewers = modelReviewersCache.get(p.id) || [];
-      const ul = document.createElement('ul');
-      ul.className = 'reviewer-list';
-      // 본인이 reviewers에 없으면 placeholder로 추가 (아직 평가 안 한 상태)
-      const hasSelf = reviewers.some(r => r.uid === currentUser?.uid);
-      const allReviewers = hasSelf ? reviewers : [{ uid: currentUser.uid, reviewerEmail: currentUser.email, _placeholder: true }, ...reviewers];
-      if (allReviewers.length === 0) {
-        const empty = document.createElement('li');
-        empty.className = 'reviewer-empty';
-        empty.textContent = '평가자 없음';
-        ul.appendChild(empty);
-      } else {
-        allReviewers.forEach(r => {
-          const rLi = document.createElement('li');
-          rLi.className = 'reviewer-item';
-          if (p.id === currentProjectId && r.uid === currentReviewerId) rLi.classList.add('active');
-          const isSelf = r.uid === currentUser?.uid;
-          const shortName = (r.reviewerEmail || r.uid).split('@')[0];
-          const selfTag = isSelf ? ' <span class="self-tag">(나)</span>' : '';
-          const meta = r._placeholder ? '<span class="placeholder">미평가</span>' : formatRelativeTime(r.updatedAt);
-          rLi.innerHTML = `<span class="reviewer-name">👤 ${esc(shortName)}${selfTag}</span><span class="reviewer-meta">${meta}</span>`;
-          rLi.onclick = (e) => {
-            e.stopPropagation();
-            if (!(p.id === currentProjectId && r.uid === currentReviewerId)) {
-              loadReviewerEvaluation(p.id, r.uid);
-            }
-          };
-          // 자기 평가만 삭제 가능 (placeholder는 아직 만들지도 않은 상태라 삭제 불필요)
-          if (isSelf && !r._placeholder) {
-            const delBtn = document.createElement('button');
-            delBtn.type = 'button';
-            delBtn.className = 'row-delete';
-            delBtn.title = '내 평가 데이터 삭제';
-            delBtn.textContent = '🗑';
-            delBtn.onclick = (e) => { e.stopPropagation(); handleDeleteMyReview(p.id); };
-            rLi.appendChild(delBtn);
-          }
-          ul.appendChild(rLi);
-        });
-      }
-      li.appendChild(ul);
-    }
-
     list.appendChild(li);
   });
+}
+
+// 모델 열기 — 내 평가 있으면 내 평가(편집 가능), 없으면 가장 최신 평가 로드
+async function openModel(modelId) {
+  const reviewers = await fetchModelReviewers(modelId);   // 최신순 정렬 + 캐시
+  const mineUid = currentUser?.uid;
+  const hasMine = reviewers.some(r => r.uid === mineUid);
+  const targetUid = hasMine ? mineUid : (reviewers[0]?.uid || mineUid);
+  renderProjectPicker();   // 평가자 수 badge 갱신
+  if (modelId !== currentProjectId || currentReviewerId !== targetUid) {
+    loadReviewerEvaluation(modelId, targetUid);
+  } else {
+    buildReviewerSwitcher();
+  }
 }
 
 // ===== Inter-rater agreement (Fleiss kappa, usability 1-5 ordinal) =====
@@ -1750,6 +1713,11 @@ function setupAddForms() {
   el('usSelFillBtn').onclick = fillSelectedUsability;
   el('usSelScore').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); fillSelectedUsability(); } };
   document.addEventListener('mouseup', () => { usDragging = false; });   // 드래그 종료 (그리드 밖에서 놓아도)
+  const ecSel = el('ecReviewerSelect');
+  if (ecSel) ecSel.onchange = (e) => {
+    const uid = e.target.value;
+    if (currentProjectId && uid && uid !== currentReviewerId) loadReviewerEvaluation(currentProjectId, uid);
+  };
   el('projectName').oninput = (e) => { state.projectName = e.target.value; saveState(); };
   el('notionLink').oninput = (e) => { state.notionLink = e.target.value; saveState(); };
   document.querySelectorAll('input[name="indicationCategory"]').forEach(r => {
@@ -1823,7 +1791,11 @@ function switchMainView(view, opts) {
   // 페이지 상단으로 스크롤 (view 전환 시 직관)
   if (opts.scrollTop !== false) window.scrollTo({ top: 0, behavior: 'instant' });
   if (view === 'evaluate') updateEvalContextBar();
-  if (view === 'results') updateResultsHero();   // 탭 전환만으로도 ROI PASS 등 hero 갱신
+  if (view === 'results') {
+    updateResultsHero();   // ROI PASS hero
+    // 평가자 수 / Fleiss κ hero (+ interrater 섹션 내용)도 탭 전환 시 갱신
+    if (firebaseReady && currentUser && currentProjectId) renderInterraterAgreement();
+  }
 }
 
 // Evaluate tab 상단 context bar — 현재 평가 모델 / reviewer 정보
@@ -1849,6 +1821,50 @@ function updateEvalContextBar() {
     }
     rEl.textContent = reviewerLabel;
   }
+  buildReviewerSwitcher();
+}
+
+// 컨텍스트 바의 평가자 전환 드롭다운 — 현재 모델의 평가자 목록에서 선택
+function buildReviewerSwitcher() {
+  const wrap = el('ecReviewerSwitch');
+  const sel = el('ecReviewerSelect');
+  if (!wrap || !sel) return;
+  const project = userProjects.find(p => p.id === currentProjectId);
+  if (!currentProjectId || project?._legacy || !currentUser) { wrap.style.display = 'none'; return; }
+
+  let reviewers = modelReviewersCache.get(currentProjectId);
+  if (!reviewers) {
+    // 캐시 없으면 fetch 후 한 번 더 빌드
+    fetchModelReviewers(currentProjectId).then(() => {
+      if (document.body.dataset.activeView === 'evaluate') buildReviewerSwitcher();
+      renderProjectPicker();
+    });
+    wrap.style.display = 'none';
+    return;
+  }
+  const mineUid = currentUser.uid;
+  const hasMine = reviewers.some(r => r.uid === mineUid);
+  const list = hasMine
+    ? reviewers.slice()
+    : [{ uid: mineUid, reviewerEmail: currentUser.email, _placeholder: true }, ...reviewers];
+
+  // 평가자가 나 하나뿐이고 내가 그걸 보고 있으면 전환할 게 없음 → 숨김
+  if (list.length <= 1) { wrap.style.display = 'none'; return; }
+
+  sel.innerHTML = '';
+  list.forEach(r => {
+    const opt = document.createElement('option');
+    opt.value = r.uid;
+    const short = (r.reviewerEmail || r.uid).split('@')[0];
+    const isSelf = r.uid === mineUid;
+    let label = isSelf ? `${short} (나)` : short;
+    if (r._placeholder) label += ' · 미평가';
+    else if (r.updatedAt) label += ` · ${formatRelativeTime(r.updatedAt)}`;
+    opt.textContent = label;
+    if (r.uid === currentReviewerId) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  wrap.style.display = '';
 }
 
 function toggleSection(btn) {
@@ -1879,7 +1895,7 @@ function renderCompletenessGrid() {
   const hint = el('completenessHint');
   if (hint) hint.textContent = gtv
     ? '각 셀에는 4-state(TP/FN/FP/TN)가 자동 표시됩니다. 셀 클릭 시 팝오버에서 Tumor 유무 / Missed / Hallucinated를 편집하세요. 입력 없는 셀은 default TP — Negative case는 그 환자의 셀만 Tumor=N으로 변경.'
-    : '각 환자에서 ROI가 누락됐으면 체크하세요. (체크=누락, 빈칸=존재). xlsx에는 존재 셀이 - 로, 누락 셀이 빈칸으로 저장됩니다.';
+    : '셀 클릭으로 순환: 존재 → 누락(FN) → N/A(FOV 밖). N/A는 completeness 분모에서 제외돼 점수에 영향 없음 · ROI 열 헤더 클릭 시 그 ROI 전체를 N/A로 토글 (예: H&N 스캔의 cauda equina)';
 
   let html;
   if (gtv) {
@@ -1951,38 +1967,59 @@ function renderCompletenessGrid() {
     });
     html += `</div>`;
   } else {
-    // OAR mode (기존)
+    // OAR mode: 존재 / 누락(FN) / N/A(FOV 밖) 3-state
     html = openGrid(R, 1);
     html += `<div class="c h rh">PatientID</div>`;
-    state.rois.forEach(roi => html += `<div class="c h">${esc(roi)}</div>`);
+    state.rois.forEach((roi, ri) => html += `<div class="c h comp-col" data-ri="${ri}" title="${esc(roi)} · 클릭: 이 ROI 전체 N/A(FOV 밖) 토글">${esc(roi)}</div>`);
     html += `<div class="c h cm">Comment</div>`;
     state.validations.forEach((v, vi) => {
       html += `<div class="c rh">${esc(v)}</div>`;
       state.rois.forEach((roi, ri) => {
-        const val = getCell(state.completeness, vi, ri);
-        html += `<div class="c"><input type="checkbox" data-vi="${vi}" data-ri="${ri}" class="comp-chk" ${val ? 'checked' : ''} /></div>`;
+        const st = getOarState(vi, ri);
+        const cls = st === 'missing' ? 'comp-miss' : st === 'na' ? 'comp-na' : 'comp-exists';
+        const label = st === 'missing' ? '누락' : st === 'na' ? 'N/A' : '';
+        const tip = st === 'missing' ? '누락(FN) · 클릭 → N/A' : st === 'na' ? 'FOV 밖(N/A, 평가 제외) · 클릭 → 존재' : '존재 · 클릭 → 누락';
+        html += `<div class="c comp-cell ${cls}" data-vi="${vi}" data-ri="${ri}" role="button" tabindex="0" title="${tip}">${label}</div>`;
       });
       html += `<div class="c cm"><input type="text" data-vi="${vi}" class="comp-comment" value="${esc(state.completenessComment[vi] || '')}" /></div>`;
     });
+    const naCounts = state.rois.map((_, ri) => { let n = 0; for (let vi = 0; vi < V; vi++) if (getOarState(vi, ri) === 'na') n++; return n; });
+    const missCounts = state.rois.map((_, ri) => { let n = 0; for (let vi = 0; vi < V; vi++) if (getOarState(vi, ri) === 'missing') n++; return n; });
     html += `<div class="c rh stat">Count (missing)</div>`;
+    missCounts.forEach(m => html += `<div class="c stat">${m}</div>`);
+    html += `<div class="c stat cm"></div>`;
+    html += `<div class="c rh stat">N/A (FOV 밖)</div>`;
+    naCounts.forEach(n => html += `<div class="c stat comp-na-stat">${n || ''}</div>`);
+    html += `<div class="c stat cm"></div>`;
+    html += `<div class="c rh stat">Completeness</div>`;
     state.rois.forEach((_, ri) => {
-      let miss = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri)) miss++;
-      html += `<div class="c stat">${miss}</div>`;
-    });
-    html += `<div class="c stat cm"></div><div class="c rh stat">Completeness</div>`;
-    state.rois.forEach((_, ri) => {
-      let miss = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri)) miss++;
-      html += `<div class="c stat">${(V > 0 ? ((V - miss) / V) * 100 : 0).toFixed(0)}%</div>`;
+      const applicable = V - naCounts[ri];
+      const pct = applicable > 0 ? ((applicable - missCounts[ri]) / applicable) * 100 : null;
+      html += `<div class="c stat">${pct === null ? '-' : pct.toFixed(0) + '%'}</div>`;
     });
     html += `<div class="c stat cm"></div></div>`;
   }
   c.innerHTML = html;
 
-  // OAR 체크박스
-  c.querySelectorAll('.comp-chk').forEach(chk => {
-    chk.onchange = (e) => {
-      setCell(state.completeness, +e.target.dataset.vi, +e.target.dataset.ri, e.target.checked);
-      saveState(); renderCompletenessGrid(); renderUsabilityGrid(); renderSummaryView(); renderSpecsGrid();
+  // OAR 3-state 셀 (존재 → 누락 → N/A 순환)
+  const rerenderComp = () => { saveState(); renderCompletenessGrid(); renderUsabilityGrid(); renderSummaryView(); renderSpecsGrid(); };
+  c.querySelectorAll('.comp-cell').forEach(cell => {
+    const cycle = () => {
+      const vi = +cell.dataset.vi, ri = +cell.dataset.ri;
+      setOarState(vi, ri, OAR_STATE_NEXT[getOarState(vi, ri)]);
+      rerenderComp();
+    };
+    cell.onclick = cycle;
+    cell.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cycle(); } };
+  });
+  // OAR ROI 열 헤더 클릭 → 그 ROI 전체 N/A 토글 (전부 N/A면 존재로 해제)
+  c.querySelectorAll('.comp-col').forEach(h => {
+    h.onclick = () => {
+      const ri = +h.dataset.ri;
+      const V2 = state.validations.length;
+      const allNa = V2 > 0 && state.validations.every((_, vi) => getOarState(vi, ri) === 'na');
+      for (let vi = 0; vi < V2; vi++) setOarState(vi, ri, allNa ? 'exists' : 'na');
+      rerenderComp();
     };
   });
   // GTV cell click → popover editor 열기 (compact mode, on-demand expand)
@@ -2114,7 +2151,10 @@ function renderUsabilityGrid() {
       + `<button type="button" class="pstatus pstatus-${ps || 'none'}" data-vi="${vi}" title="${esc(PATIENT_STATUS_TITLE[ps || 'none'])}">${PATIENT_STATUS_ICON[ps || 'none']}</button>`
       + `<span class="rh-name" title="${esc(v)}">${esc(v)}</span></div>`;
     state.rois.forEach((roi, ri) => {
-      if (isUnscoreable(vi, ri)) html += `<div class="c missing" data-vi="${vi}" data-ri="${ri}">❌</div>`;
+      if (isUnscoreable(vi, ri)) {
+        const naCell = !isGtvMode() && getCell(state.completeness, vi, ri) === 'na';
+        html += `<div class="c missing${naCell ? ' comp-na' : ''}" data-vi="${vi}" data-ri="${ri}" title="${naCell ? 'FOV 밖 (N/A) — 평가 제외' : '평가 불가'}">${naCell ? 'N/A' : '❌'}</div>`;
+      }
       else {
         const sv = getCell(state.usability, vi, ri) || '';
         const sc = sv ? (+sv <= 2 ? ' score-low' : +sv === 3 ? ' score-mid' : '') : '';
@@ -2256,7 +2296,7 @@ function computeCompletenessStats() {
   const V = state.validations.length;
   const gtv = isGtvMode();
   return state.rois.map((_, ri) => {
-    let miss = 0, tp = 0, fn = 0, fp = 0, tn = 0;
+    let miss = 0, tp = 0, fn = 0, fp = 0, tn = 0, naCount = 0;
     let severeMissCount = 0;  // missed='many' count (only meaningful in GTV)
     for (let vi = 0; vi < V; vi++) {
       if (gtv) {
@@ -2270,7 +2310,9 @@ function computeCompletenessStats() {
         else if (s === 'FP') fp++;
         else if (s === 'TN') tn++;
       } else {
-        if (getCell(state.completeness, vi, ri)) miss++;
+        const c = getCell(state.completeness, vi, ri);
+        if (c === 'na') naCount++;        // FOV 밖 → 평가 제외
+        else if (c === true) miss++;      // 누락(FN)
       }
     }
     let completeness;
@@ -2282,9 +2324,10 @@ function computeCompletenessStats() {
       sensitivity = denomPos ? tp / denomPos : null;  // TP/(TP+FN)
       fpRate = denomNeg ? fp / denomNeg : null;        // FP/(FP+TN) = 1-Specificity
     } else {
-      completeness = V > 0 ? (V - miss) / V : 0;
+      const applicable = V - naCount;   // N/A 제외한 분모
+      completeness = applicable > 0 ? (applicable - miss) / applicable : 0;
     }
-    return { miss, total: V, completeness, tp, fn, fp, tn, sensitivity, fpRate, severeMissCount };
+    return { miss, naCount, total: V, completeness, tp, fn, fp, tn, sensitivity, fpRate, severeMissCount };
   });
 }
 
@@ -2796,7 +2839,11 @@ function buildWorkbook() {
   makeDataSheet('1. ROI Completeness', state.validations, state.completeness, state.completenessComment,
     (ws, ref, vi, ri) => {
       if (gtvX) setC(ws, ref, gtvCellLabel(vi, ri));
-      else { if (!getCell(state.completeness, vi, ri)) setC(ws, ref, '-'); }
+      else {
+        const c = getCell(state.completeness, vi, ri);
+        if (c === 'na') setC(ws, ref, 'N/A');       // FOV 밖
+        else if (!c) setC(ws, ref, '-');            // 존재 (누락은 빈 셀)
+      }
     },
     (ws, sr) => {
       if (gtvX) {
@@ -2834,11 +2881,15 @@ function buildWorkbook() {
           });
         });
       } else {
-        setC(ws, `A${sr}`, 'Count (missing)', { rowHeader: true }); setC(ws, `A${sr+1}`, 'Completeness', { rowHeader: true });
+        setC(ws, `A${sr}`, 'Count (missing)', { rowHeader: true });
+        setC(ws, `A${sr+1}`, 'N/A (FOV 밖)', { rowHeader: true });
+        setC(ws, `A${sr+2}`, 'Completeness', { rowHeader: true });
         state.rois.forEach((_, ri) => {
-          const c = colLetter(ri+2);
-          setC(ws, `${c}${sr}`, '__formula__', { formula: `COUNTBLANK(${c}2:${c}${V+1})`, type: 'n', rowHeader: true });
-          setC(ws, `${c}${sr+1}`, '__formula__', { formula: `(1-COUNTBLANK(${c}2:${c}${V+1})/ROWS(${c}2:${c}${V+1}))`, type: 'n', rowHeader: true });
+          const c = colLetter(ri+2), rg = `${c}2:${c}${V+1}`;
+          // 누락 = 빈 셀(COUNTBLANK), N/A = "N/A" 텍스트, 존재 = "-". 분모는 N/A 제외.
+          setC(ws, `${c}${sr}`, '__formula__', { formula: `COUNTBLANK(${rg})`, type: 'n', rowHeader: true });
+          setC(ws, `${c}${sr+1}`, '__formula__', { formula: `COUNTIF(${rg},"N/A")`, type: 'n', rowHeader: true });
+          setC(ws, `${c}${sr+2}`, '__formula__', { formula: `IFERROR(1-COUNTBLANK(${rg})/(ROWS(${rg})-COUNTIF(${rg},"N/A")),"")`, type: 'n', rowHeader: true });
         });
       }
     }
@@ -2968,7 +3019,7 @@ function generateMdCompleteness() {
         return tag.length ? `${st} (${tag.join(', ')})` : st;
       }
       const c = getCell(state.completeness, vi, ri);
-      return c ? '' : '-';
+      return c === 'na' ? 'N/A' : (c === true ? '' : '-');
     }),
     state.completenessComment[vi] || ''
   ]);
@@ -3003,12 +3054,14 @@ function generateMdCompleteness() {
       rows.push([label, ...cells, key === 'missed' ? '(1-2 / 3-5 / >5)' : '(1-2 / 3-5 / >5)']);
     });
   } else {
-    const missCounts = state.rois.map((_, ri) => {
-      let miss = 0; for (let vi = 0; vi < V; vi++) if (getCell(state.completeness, vi, ri)) miss++;
-      return miss;
-    });
+    const missCounts = state.rois.map((_, ri) => { let n = 0; for (let vi = 0; vi < V; vi++) if (getOarState(vi, ri) === 'missing') n++; return n; });
+    const naCounts = state.rois.map((_, ri) => { let n = 0; for (let vi = 0; vi < V; vi++) if (getOarState(vi, ri) === 'na') n++; return n; });
     rows.push(['**Count (missing)**', ...missCounts.map(String), '']);
-    rows.push(['**Completeness**', ...missCounts.map(m => ((V - m) / V * 100).toFixed(0) + '%'), '']);
+    rows.push(['**N/A (FOV 밖)**', ...naCounts.map(n => n ? String(n) : '-'), '']);
+    rows.push(['**Completeness**', ...state.rois.map((_, ri) => {
+      const applicable = V - naCounts[ri];
+      return applicable > 0 ? ((applicable - missCounts[ri]) / applicable * 100).toFixed(0) + '%' : '-';
+    }), '']);
   }
   return toMdTable(headers, rows);
 }
@@ -3171,16 +3224,18 @@ function exportPDF() {
 
   if (selected.includes('completeness') && V && R) {
     const headers = ['PatientID', ...state.rois, 'Comment'];
-    const rows = state.validations.map((v, vi) => [v, ...state.rois.map((_, ri) => getCell(state.completeness, vi, ri) ? '' : '-'), state.completenessComment[vi] || '']);
-    const miss = state.rois.map((_, ri) => { let m=0; for(let vi=0;vi<V;vi++) if(getCell(state.completeness,vi,ri)) m++; return m; });
+    const rows = state.validations.map((v, vi) => [v, ...state.rois.map((_, ri) => { const c = getCell(state.completeness, vi, ri); return c === 'na' ? 'N/A' : (c === true ? '' : '-'); }), state.completenessComment[vi] || '']);
+    const miss = state.rois.map((_, ri) => { let m=0; for(let vi=0;vi<V;vi++) if(getOarState(vi,ri)==='missing') m++; return m; });
+    const naC = state.rois.map((_, ri) => { let n=0; for(let vi=0;vi<V;vi++) if(getOarState(vi,ri)==='na') n++; return n; });
     rows.push(['Count (missing)', ...miss.map(String), '']);
-    rows.push(['Completeness', ...miss.map(m => ((V-m)/V*100).toFixed(0)+'%'), '']);
+    rows.push(['N/A (FOV 밖)', ...naC.map(n => n?String(n):'-'), '']);
+    rows.push(['Completeness', ...state.rois.map((_, ri) => { const ap = V-naC[ri]; return ap>0 ? ((ap-miss[ri])/ap*100).toFixed(0)+'%' : '-'; }), '']);
     sections.push(`<section><h2>1. ROI Completeness</h2>${tbl(headers, rows)}</section>`);
   }
 
   if (selected.includes('usability') && V && R) {
     const headers = ['PatientID', ...state.rois, 'Comment'];
-    const rows = state.validations.map((v, vi) => [v, ...state.rois.map((_, ri) => getCell(state.completeness,vi,ri) ? '❌' : (getCell(state.usability,vi,ri)||'')), state.usabilityComment[vi]||'']);
+    const rows = state.validations.map((v, vi) => [v, ...state.rois.map((_, ri) => isUnscoreable(vi,ri) ? (getCell(state.completeness,vi,ri)==='na' ? 'N/A' : '❌') : (getCell(state.usability,vi,ri)||'')), state.usabilityComment[vi]||'']);
     const stats = computeUsabilityStats();
     rows.push(['Average', ...stats.map(s => s.avg!==null?s.avg.toFixed(2):'-'), '']);
     rows.push(['Ratio (≤2)', ...stats.map(s => s.r2!==null?(s.r2*100).toFixed(0)+'%':'-'), '']);
