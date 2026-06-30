@@ -625,19 +625,18 @@ async function loadReviewerEvaluation(modelId, reviewerUid) {
     if (document.body.dataset.activeView === 'setup') {
       switchMainView('evaluate', { scrollTop: false });
     }
-    // 평가자 목록 lazy fetch → badge + 상단 평가자 전환 드롭다운 채움 (모델당 1회 안내)
+    // 평가자 목록 lazy fetch → 사이드바 활성 모델 아래 평가자 목록 채움 (모델당 1회 안내)
     if (!expandedModels.has(modelId)) {
       expandedModels.add(modelId);
       fetchModelReviewers(modelId).then((reviewers) => {
         modelReviewersCache.set(modelId, reviewers);
         renderProjectPicker();
-        buildReviewerSwitcher();
         // 본인 평가가 비어있고 다른 평가자가 있으면 안내 toast (한 번만)
         const isSelfEmpty = reviewerUid === currentUser.uid && !rSnap.exists;
         const others = (reviewers || []).filter(r => r.uid !== currentUser.uid);
         if (isSelfEmpty && others.length > 0) {
           const names = others.map(r => (r.reviewerEmail || r.uid).split('@')[0]).slice(0, 3).join(', ');
-          toast('info', `이 모델에 동료 ${others.length}명의 평가가 있습니다 (${names}). 상단 '평가자 보기' 드롭다운에서 선택하면 그들의 점수를 볼 수 있어요.`, { duration: 8000 });
+          toast('info', `이 모델에 동료 ${others.length}명의 평가가 있습니다 (${names}). 사이드바에서 모델 아래 평가자 이름을 클릭하면 그들의 점수를 볼 수 있어요.`, { duration: 8000 });
         }
       }).catch(() => {});
     }
@@ -910,6 +909,46 @@ function renderProjectPicker() {
       row.appendChild(actions);
     }
     li.appendChild(row);
+
+    // 활성(현재 열린) 비-legacy 모델 아래에만 평가자 목록 노출 — 다른 평가자 보기 = 여기서 클릭
+    if (!p._legacy && p.id === currentProjectId) {
+      let reviewers = modelReviewersCache.get(p.id);
+      if (!reviewers) {                       // 캐시 없음(또는 저장으로 무효화) → 재fetch 후 재렌더
+        fetchModelReviewers(p.id).then(() => renderProjectPicker());
+        reviewers = [];
+      }
+      const hasSelf = reviewers.some(r => r.uid === currentUser?.uid);
+      const allReviewers = hasSelf
+        ? reviewers
+        : [{ uid: currentUser.uid, reviewerEmail: currentUser.email, _placeholder: true }, ...reviewers];
+      const ul = document.createElement('ul');
+      ul.className = 'reviewer-list';
+      allReviewers.forEach(r => {
+        const rLi = document.createElement('li');
+        rLi.className = 'reviewer-item';
+        if (r.uid === currentReviewerId) rLi.classList.add('active');
+        const isSelf = r.uid === currentUser?.uid;
+        const shortName = (r.reviewerEmail || r.uid).split('@')[0];
+        const selfTag = isSelf ? ' <span class="self-tag">(나)</span>' : '';
+        const meta = r._placeholder ? '<span class="placeholder">미평가</span>' : formatRelativeTime(r.updatedAt);
+        rLi.innerHTML = `<span class="reviewer-name">👤 ${esc(shortName)}${selfTag}</span><span class="reviewer-meta">${meta}</span>`;
+        rLi.onclick = (e) => {
+          e.stopPropagation();
+          if (r.uid !== currentReviewerId) loadReviewerEvaluation(p.id, r.uid);
+        };
+        if (isSelf && !r._placeholder) {
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'row-delete';
+          delBtn.title = '내 평가 데이터 삭제';
+          delBtn.textContent = '🗑';
+          delBtn.onclick = (e) => { e.stopPropagation(); handleDeleteMyReview(p.id); };
+          rLi.appendChild(delBtn);
+        }
+        ul.appendChild(rLi);
+      });
+      li.appendChild(ul);
+    }
     list.appendChild(li);
   });
 }
@@ -920,11 +959,10 @@ async function openModel(modelId) {
   const mineUid = currentUser?.uid;
   const hasMine = reviewers.some(r => r.uid === mineUid);
   const targetUid = hasMine ? mineUid : (reviewers[0]?.uid || mineUid);
-  renderProjectPicker();   // 평가자 수 badge 갱신
   if (modelId !== currentProjectId || currentReviewerId !== targetUid) {
-    loadReviewerEvaluation(modelId, targetUid);
+    loadReviewerEvaluation(modelId, targetUid);   // 내부에서 renderProjectPicker 호출
   } else {
-    buildReviewerSwitcher();
+    renderProjectPicker();   // 이미 열림 — 사이드바 평가자 목록만 갱신
   }
 }
 
@@ -1719,11 +1757,6 @@ function setupAddForms() {
   el('usSelFillBtn').onclick = fillSelectedUsability;
   el('usSelScore').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); fillSelectedUsability(); } };
   document.addEventListener('mouseup', () => { usDragging = false; });   // 드래그 종료 (그리드 밖에서 놓아도)
-  const ecSel = el('ecReviewerSelect');
-  if (ecSel) ecSel.onchange = (e) => {
-    const uid = e.target.value;
-    if (currentProjectId && uid && uid !== currentReviewerId) loadReviewerEvaluation(currentProjectId, uid);
-  };
   el('projectName').oninput = (e) => { state.projectName = e.target.value; saveState(); };
   el('notionLink').oninput = (e) => { state.notionLink = e.target.value; saveState(); };
   document.querySelectorAll('input[name="indicationCategory"]').forEach(r => {
@@ -1827,51 +1860,6 @@ function updateEvalContextBar() {
     }
     rEl.textContent = reviewerLabel;
   }
-  buildReviewerSwitcher();
-}
-
-// 컨텍스트 바의 평가자 전환 드롭다운 — 현재 모델의 평가자 목록에서 선택
-function buildReviewerSwitcher() {
-  const wrap = el('ecReviewerSwitch');
-  const sel = el('ecReviewerSelect');
-  if (!wrap || !sel) return;
-  const project = userProjects.find(p => p.id === currentProjectId);
-  if (!currentProjectId || project?._legacy || !currentUser) { wrap.style.display = 'none'; return; }
-
-  let reviewers = modelReviewersCache.get(currentProjectId);
-  if (!reviewers) {
-    // 캐시 없으면 fetch 후 한 번 더 빌드
-    fetchModelReviewers(currentProjectId).then(() => {
-      if (document.body.dataset.activeView === 'evaluate') buildReviewerSwitcher();
-      renderProjectPicker();
-    });
-    wrap.style.display = 'none';
-    return;
-  }
-  const mineUid = currentUser.uid;
-  const hasMine = reviewers.some(r => r.uid === mineUid);
-  const list = hasMine
-    ? reviewers.slice()
-    : [{ uid: mineUid, reviewerEmail: currentUser.email, _placeholder: true }, ...reviewers];
-
-  // 모델이 열려 있으면 항상 노출 (나 혼자여도 컨트롤을 보여 발견 가능하게)
-  sel.innerHTML = '';
-  list.forEach(r => {
-    const opt = document.createElement('option');
-    opt.value = r.uid;
-    const short = (r.reviewerEmail || r.uid).split('@')[0];
-    const isSelf = r.uid === mineUid;
-    let label = isSelf ? `${short} (나)` : short;
-    if (r._placeholder) label += ' · 미평가';
-    else if (r.updatedAt) label += ` · ${formatRelativeTime(r.updatedAt)}`;
-    opt.textContent = label;
-    if (r.uid === currentReviewerId) opt.selected = true;
-    sel.appendChild(opt);
-  });
-  // 라벨에 평가자 수 노출 → 발견성 + 맥락 (나 혼자면 "평가자 1명")
-  const lbl = el('ecReviewerSwitchLabel');
-  if (lbl) lbl.textContent = list.length > 1 ? `평가자 ${list.length}명 · 보기` : '평가자 (나만)';
-  wrap.style.display = '';
 }
 
 function toggleSection(btn) {

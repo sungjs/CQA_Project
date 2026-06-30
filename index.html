@@ -44,18 +44,40 @@
 
 <!-- 로그인 전 랜딩 화면 (로그아웃 시 노출, 로그인하면 숨김) -->
 <div id="loginScreen" class="login-screen">
-  <div class="login-card">
-    <div class="login-logo">🧪</div>
-    <h1 class="login-title">CQA Input Tool</h1>
-    <p class="login-tagline">OAR · GTV autosegmentation 평가 및 결과 분석 도구</p>
-    <ul class="login-features">
-      <li><span>✍</span> ROI · 환자별 Completeness / Usability 평가 입력</li>
-      <li><span>👥</span> 멀티 평가자 협업 + Fleiss κ 일치도 분석</li>
-      <li><span>📊</span> PASS/FAIL 요약 · XLSX / PDF / Markdown 내보내기</li>
-    </ul>
-    <button id="btnLoginScreen" class="btn btn-primary login-cta">🔐 Google로 로그인</button>
-    <p class="login-note">@oncosoft.io 계정으로만 이용할 수 있습니다.</p>
-    <p id="loginScreenStatus" class="login-status"></p>
+  <!-- 브랜드 패널: ROI 윤곽선(contour) 모티프 -->
+  <div class="login-brand">
+    <svg class="login-motif" viewBox="0 0 400 400" fill="none" stroke="#fff" stroke-width="1.4" aria-hidden="true" preserveAspectRatio="xMidYMid slice">
+      <ellipse cx="212" cy="206" rx="38" ry="30"/>
+      <ellipse cx="206" cy="206" rx="68" ry="56"/>
+      <ellipse cx="198" cy="207" rx="100" ry="86"/>
+      <ellipse cx="189" cy="208" rx="134" ry="118"/>
+      <ellipse cx="180" cy="209" rx="170" ry="152"/>
+      <ellipse cx="171" cy="210" rx="208" ry="188"/>
+      <circle cx="212" cy="206" r="3.2" fill="#fff" stroke="none"/>
+      <ellipse cx="306" cy="86" rx="24" ry="19" opacity="0.75"/>
+      <ellipse cx="306" cy="86" rx="44" ry="37" opacity="0.45"/>
+    </svg>
+    <div class="login-brand-inner">
+      <div class="login-logo">🧪</div>
+      <h1 class="login-title">CQA Input Tool</h1>
+      <p class="login-tagline">OAR · GTV autosegmentation 윤곽 품질을 정량 평가하고, 여러 평가자의 일치도까지 한곳에서.</p>
+    </div>
+  </div>
+
+  <!-- 로그인 패널 -->
+  <div class="login-panel">
+    <div class="login-card">
+      <h2 class="login-card-title">로그인</h2>
+      <p class="login-card-sub">계속하려면 oncosoft.io 계정으로 로그인하세요.</p>
+      <ul class="login-features">
+        <li><span>✍</span> ROI · 환자별 Completeness / Usability 입력</li>
+        <li><span>👥</span> 멀티 평가자 + Fleiss κ 일치도</li>
+        <li><span>📊</span> PASS/FAIL 요약 · XLSX / PDF / Markdown 내보내기</li>
+      </ul>
+      <button id="btnLoginScreen" class="btn btn-primary login-cta">🔐 Google로 로그인</button>
+      <p class="login-note">@oncosoft.io 계정만 접근할 수 있습니다.</p>
+      <p id="loginScreenStatus" class="login-status"></p>
+    </div>
   </div>
 </div>
 
@@ -370,10 +392,6 @@
         <div class="ec-model-name" id="ecModelName">— 모델 선택 —</div>
         <div class="ec-reviewer" id="ecReviewer">사이드바에서 모델을 선택하세요</div>
       </div>
-    </div>
-    <div class="ec-right" id="ecReviewerSwitch" style="display:none">
-      <label class="ec-switch-label" id="ecReviewerSwitchLabel" for="ecReviewerSelect">평가자 보기</label>
-      <select id="ecReviewerSelect" class="ec-reviewer-select"></select>
     </div>
   </div>
 
