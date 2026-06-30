@@ -42,6 +42,23 @@
 <!-- 사이드바 펼치기 토글 (collapsed 상태일 때만 보임) -->
 <button id="btnSidebarOpen" class="sidebar-open-btn hidden" title="사이드바 열기">☰</button>
 
+<!-- 로그인 전 랜딩 화면 (로그아웃 시 노출, 로그인하면 숨김) -->
+<div id="loginScreen" class="login-screen">
+  <div class="login-card">
+    <div class="login-logo">🧪</div>
+    <h1 class="login-title">CQA Input Tool</h1>
+    <p class="login-tagline">OAR · GTV autosegmentation 평가 및 결과 분석 도구</p>
+    <ul class="login-features">
+      <li><span>✍</span> ROI · 환자별 Completeness / Usability 평가 입력</li>
+      <li><span>👥</span> 멀티 평가자 협업 + Fleiss κ 일치도 분석</li>
+      <li><span>📊</span> PASS/FAIL 요약 · XLSX / PDF / Markdown 내보내기</li>
+    </ul>
+    <button id="btnLoginScreen" class="btn btn-primary login-cta">🔐 Google로 로그인</button>
+    <p class="login-note">@oncosoft.io 계정으로만 이용할 수 있습니다.</p>
+    <p id="loginScreenStatus" class="login-status"></p>
+  </div>
+</div>
+
 <div id="appMain">
   <div id="readOnlyBanner" class="read-only-banner hidden">
     🔒 <b>읽기 전용 (Legacy 평가)</b> · 변경 내용은 저장되지 않습니다. XLSX/PDF/MD 내보내기는 가능합니다.
@@ -355,7 +372,7 @@
       </div>
     </div>
     <div class="ec-right" id="ecReviewerSwitch" style="display:none">
-      <label class="ec-switch-label" for="ecReviewerSelect">평가자 보기</label>
+      <label class="ec-switch-label" id="ecReviewerSwitchLabel" for="ecReviewerSelect">평가자 보기</label>
       <select id="ecReviewerSelect" class="ec-reviewer-select"></select>
     </div>
   </div>

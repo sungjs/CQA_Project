@@ -1289,12 +1289,14 @@ function updateAuthUI(user) {
     userInfo.classList.remove('hidden');
     userEmail.textContent = user.email;
     sidebar.classList.remove('hidden');
+    document.body.classList.add('authed');   // 로그인 게이트 통과 → 앱 노출
     syncSidebarOpenBtn();
   } else {
     signInBtn.classList.remove('hidden');
     userInfo.classList.add('hidden');
     sidebar.classList.add('hidden');
     el('btnSidebarOpen').classList.add('hidden');
+    document.body.classList.remove('authed'); // 로그아웃 → 랜딩 화면으로
     setSyncStatus('offline', '로컬 모드');
   }
   updateEmptyStateBanners();
@@ -1427,6 +1429,8 @@ function initFirebase() {
   if (!cfg || cfg.apiKey === 'REPLACE_ME') {
     setSyncStatus('offline', '로컬 모드 (Firebase 미설정)');
     el('btnSignIn').classList.remove('hidden');
+    document.body.classList.add('local-fallback'); // 로그인 불가 → 게이트 우회(로컬 모드)
+    const st = el('loginScreenStatus'); if (st) st.textContent = 'Firebase 미설정 — 로컬 모드로 실행 중';
     return;
   }
   try {
@@ -1456,6 +1460,8 @@ function initFirebase() {
     console.error('Firebase 초기화 실패:', e);
     setSyncStatus('error', '⚠ Firebase 초기화 실패');
     el('btnSignIn').classList.remove('hidden');
+    document.body.classList.add('local-fallback'); // 초기화 실패 → 게이트 우회(로컬 모드)
+    const st = el('loginScreenStatus'); if (st) st.textContent = 'Firebase 초기화 실패 — 로컬 모드로 실행 중';
   }
 }
 
@@ -1848,9 +1854,7 @@ function buildReviewerSwitcher() {
     ? reviewers.slice()
     : [{ uid: mineUid, reviewerEmail: currentUser.email, _placeholder: true }, ...reviewers];
 
-  // 평가자가 나 하나뿐이고 내가 그걸 보고 있으면 전환할 게 없음 → 숨김
-  if (list.length <= 1) { wrap.style.display = 'none'; return; }
-
+  // 모델이 열려 있으면 항상 노출 (나 혼자여도 컨트롤을 보여 발견 가능하게)
   sel.innerHTML = '';
   list.forEach(r => {
     const opt = document.createElement('option');
@@ -1864,6 +1868,9 @@ function buildReviewerSwitcher() {
     if (r.uid === currentReviewerId) opt.selected = true;
     sel.appendChild(opt);
   });
+  // 라벨에 평가자 수 노출 → 발견성 + 맥락 (나 혼자면 "평가자 1명")
+  const lbl = el('ecReviewerSwitchLabel');
+  if (lbl) lbl.textContent = list.length > 1 ? `평가자 ${list.length}명 · 보기` : '평가자 (나만)';
   wrap.style.display = '';
 }
 
@@ -3369,6 +3376,8 @@ function init() {
   // 클라우드 / 인증 wiring
   el('btnSignIn').onclick = handleSignIn;
   el('btnSignOut').onclick = handleSignOut;
+  const btnLoginScreen = el('btnLoginScreen');
+  if (btnLoginScreen) btnLoginScreen.onclick = handleSignIn;
   el('btnNewProject').onclick = async () => {
     if (!currentUser) return;
     const name = prompt('새 모델명을 입력하세요:', 'New Model');
